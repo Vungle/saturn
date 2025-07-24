@@ -23,7 +23,7 @@ type Config struct {
 	Monitoring MonitoringConfig           `json:"monitoring,omitempty"`
 	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry      RetryConfig                `json:"retry,omitempty"`
-}
+	Reload     ReloadConfig               `json:"reload,omitempty"`
 
 // SlackConfig contains Slack-specific configuration
 type SlackConfig struct {
@@ -65,7 +65,7 @@ type MCPServerConfig struct {
 	InitializeTimeoutSeconds *int              `json:"initializeTimeoutSeconds,omitempty"`
 	Tools                    MCPToolsConfig    `json:"tools,omitempty"`
 }
-
+  
 // GetTransport returns the transport type, inferring from other fields if not explicitly set
 func (mcp *MCPServerConfig) GetTransport() string {
 	if mcp.Transport != "" {
@@ -73,10 +73,12 @@ func (mcp *MCPServerConfig) GetTransport() string {
 	}
 	if mcp.Command != "" {
 		return "stdio" // Default: if command is specified, use stdio
+
 	}
 	if mcp.URL != "" {
 		return "sse" // Default: if URL is specified, use sse
 	}
+
 	return "stdio" // Fallback default
 }
 
@@ -100,6 +102,7 @@ type RAGConfig struct {
 	Provider  string                       `json:"provider,omitempty"`
 	ChunkSize int                          `json:"chunkSize,omitempty"`
 	Providers map[string]RAGProviderConfig `json:"providers,omitempty"`
+
 }
 
 // RAGProviderConfig contains RAG provider-specific settings
@@ -255,7 +258,6 @@ func (c *Config) ApplyDefaults() {
 	if c.Retry.MCPReconnectBackoff == "" {
 		c.Retry.MCPReconnectBackoff = "1s"
 	}
-
 	// Monitoring defaults
 	c.Monitoring.Enabled = true // Default to enabled
 	if c.Monitoring.MetricsPort == 0 {
