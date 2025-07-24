@@ -23,6 +23,7 @@ type Config struct {
 	Monitoring MonitoringConfig           `json:"monitoring,omitempty"`
 	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry      RetryConfig                `json:"retry,omitempty"`
+	Reload     ReloadConfig               `json:"reload,omitempty"`
 }
 
 // SlackConfig contains Slack-specific configuration
@@ -73,10 +74,14 @@ func (mcp *MCPServerConfig) GetTransport() string {
 	}
 	if mcp.Command != "" {
 		return "stdio" // Default: if command is specified, use stdio
+
 	}
 	if mcp.URL != "" {
 		return "sse" // Default: if URL is specified, use sse
 	}
+	return 30 // Default timeout: 30 seconds
+}
+
 	return "stdio" // Fallback default
 }
 
@@ -142,6 +147,12 @@ type RetryConfig struct {
 	MaxBackoff           string `json:"maxBackoff,omitempty"`           // Maximum backoff duration (default: "5s")
 	MCPReconnectAttempts int    `json:"mcpReconnectAttempts,omitempty"` // MCP SSE reconnection attempts (default: 5)
 	MCPReconnectBackoff  string `json:"mcpReconnectBackoff,omitempty"`  // MCP reconnection backoff (default: "1s")
+}
+
+// ReloadConfig contains signal-based reload configuration
+type ReloadConfig struct {
+	Enabled  bool   `json:"enabled,omitempty"`  // Enable periodic reload (default: false)
+	Interval string `json:"interval,omitempty"` // Reload interval (default: "30m")
 }
 
 // ApplyDefaults applies default values to the configuration
@@ -255,7 +266,6 @@ func (c *Config) ApplyDefaults() {
 	if c.Retry.MCPReconnectBackoff == "" {
 		c.Retry.MCPReconnectBackoff = "1s"
 	}
-
 	// Monitoring defaults
 	c.Monitoring.Enabled = true // Default to enabled
 	if c.Monitoring.MetricsPort == 0 {
