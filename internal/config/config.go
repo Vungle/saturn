@@ -24,6 +24,7 @@ type Config struct {
 	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry      RetryConfig                `json:"retry,omitempty"`
 	Reload     ReloadConfig               `json:"reload,omitempty"`
+}
 
 // SlackConfig contains Slack-specific configuration
 type SlackConfig struct {
@@ -65,7 +66,7 @@ type MCPServerConfig struct {
 	InitializeTimeoutSeconds *int              `json:"initializeTimeoutSeconds,omitempty"`
 	Tools                    MCPToolsConfig    `json:"tools,omitempty"`
 }
-  
+
 // GetTransport returns the transport type, inferring from other fields if not explicitly set
 func (mcp *MCPServerConfig) GetTransport() string {
 	if mcp.Transport != "" {
@@ -102,7 +103,6 @@ type RAGConfig struct {
 	Provider  string                       `json:"provider,omitempty"`
 	ChunkSize int                          `json:"chunkSize,omitempty"`
 	Providers map[string]RAGProviderConfig `json:"providers,omitempty"`
-
 }
 
 // RAGProviderConfig contains RAG provider-specific settings
@@ -145,6 +145,12 @@ type RetryConfig struct {
 	MaxBackoff           string `json:"maxBackoff,omitempty"`           // Maximum backoff duration (default: "5s")
 	MCPReconnectAttempts int    `json:"mcpReconnectAttempts,omitempty"` // MCP SSE reconnection attempts (default: 5)
 	MCPReconnectBackoff  string `json:"mcpReconnectBackoff,omitempty"`  // MCP reconnection backoff (default: "1s")
+}
+
+// ReloadConfig contains signal-based reload configuration
+type ReloadConfig struct {
+	Enabled  bool   `json:"enabled,omitempty"`  // Enable periodic reload (default: false)
+	Interval string `json:"interval,omitempty"` // Reload interval (default: "30m")
 }
 
 // ApplyDefaults applies default values to the configuration
