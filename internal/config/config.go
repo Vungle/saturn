@@ -79,8 +79,6 @@ func (mcp *MCPServerConfig) GetTransport() string {
 	if mcp.URL != "" {
 		return "sse" // Default: if URL is specified, use sse
 	}
-	return 30 // Default timeout: 30 seconds
-}
 
 	return "stdio" // Fallback default
 }
