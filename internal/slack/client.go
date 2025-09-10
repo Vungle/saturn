@@ -18,6 +18,7 @@ import (
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
+	"github.com/tuannvm/slack-mcp-client/internal/googledocs"
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
@@ -173,6 +174,21 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		}
 		cfg.LLM.CustomPrompt = string(content)
 		clientLogger.InfoKV("Loaded custom prompt from file", "file", cfg.LLM.CustomPromptFile)
+	}
+
+	// Load custom prompt from Google Doc if specified and customPrompt is empty
+	if cfg.LLM.CustomPromptGoogleDoc != "" && cfg.LLM.CustomPrompt == "" {
+		credentialsFile := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+		if credentialsFile == "" {
+			clientLogger.Warn("GOOGLE_APPLICATION_CREDENTIALS not set, skipping Google Doc custom prompt")
+		} else {
+			ctx := context.Background()
+			err := loadCustomPromptFromGoogleDoc(ctx, cfg, credentialsFile, clientLogger)
+			if err != nil {
+				clientLogger.ErrorKV("Failed to load custom prompt from Google Doc", "docId", cfg.LLM.CustomPromptGoogleDoc, "error", err)
+				return nil, customErrors.WrapConfigError(err, "custom_prompt_google_doc_failed", "Failed to load custom prompt from Google Doc")
+			}
+		}
 	}
 
 	// Pass the raw map to the bridge with the configured log level
@@ -783,4 +799,24 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 	// Set final trace output
 	c.tracingHandler.SetOutput(span, finalResponse)
 	c.tracingHandler.RecordSuccess(span, "Tool processing completed")
+}
+
+// loadCustomPromptFromGoogleDoc loads custom prompt content from a Google Doc
+func loadCustomPromptFromGoogleDoc(ctx context.Context, cfg *config.Config, credentialsFile string, logger *logging.Logger) error {
+	client, err := googledocs.NewClient(ctx, credentialsFile)
+	if err != nil {
+		return fmt.Errorf("failed to create Google Docs client: %w", err)
+	}
+
+	fmt.Println(credentialsFile)
+	fmt.Println(cfg.LLM.CustomPromptGoogleDoc)
+
+	content, err := client.GetDocumentContent(ctx, cfg.LLM.CustomPromptGoogleDoc)
+	if err != nil {
+		return fmt.Errorf("failed to get document content: %w", err)
+	}
+
+	cfg.LLM.CustomPrompt = content
+	logger.InfoKV("Loaded custom prompt from Google Doc", "docId", cfg.LLM.CustomPromptGoogleDoc, "contentLength", len(content))
+	return nil
 }

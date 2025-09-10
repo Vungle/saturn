@@ -21,6 +21,7 @@ import (
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
+	"github.com/tuannvm/slack-mcp-client/internal/googledocs"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
@@ -52,6 +53,10 @@ var (
 	ragStats           = flag.Bool("rag-stats", false, "Show RAG statistics and exit")
 	ragAssistantName   = flag.String("rag-assistant-name", "", "Name for the OpenAI assistant (for init)")
 	ragVectorStoreName = flag.String("rag-vector-store-name", "", "Name for the vector store (for init)")
+
+	// Google Docs related flags
+	googleDocTest     = flag.String("google-doc-test", "", "Test Google Docs API by fetching document content with document ID and exit")
+	googleCredentials = flag.String("google-credentials", "", "Path to Google credentials JSON file (required for Google Docs API)")
 )
 
 func init() {
@@ -106,6 +111,12 @@ func main() {
 
 	if *ragStats {
 		handleRAGStats()
+		return
+	}
+
+	// Handle Google Docs test command
+	if *googleDocTest != "" {
+		handleGoogleDocTest(*googleDocTest)
 		return
 	}
 
@@ -998,4 +1009,45 @@ func executeMigrationScript(inputFile, outputFile string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+// handleGoogleDocTest handles the Google Docs API test command
+func handleGoogleDocTest(docID string) {
+	fmt.Printf("Testing Google Docs API with document ID: %s\n", docID)
+
+	// Validate required parameters
+	if *googleCredentials == "" {
+		fmt.Fprintf(os.Stderr, "Error: --google-credentials flag is required for Google Docs API test\n")
+		fmt.Fprintf(os.Stderr, "Usage: slack-mcp-client --google-doc-test DOCUMENT_ID --google-credentials path/to/credentials.json\n")
+		os.Exit(1)
+	}
+
+	// Check if credentials file exists
+	if _, err := os.Stat(*googleCredentials); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: Credentials file '%s' not found\n", *googleCredentials)
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+
+	// Create Google Docs client
+	client, err := googledocs.NewClient(ctx, *googleCredentials)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating Google Docs client: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Fetch document content
+	fmt.Printf("Fetching content from Google Doc...\n")
+	content, err := client.GetDocumentContent(ctx, docID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error fetching document content: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display results
+	fmt.Printf("\n=== Document Content ===\n")
+	fmt.Printf("%s\n", content)
+	fmt.Printf("\n=== Content Length: %d characters ===\n", len(content))
+	fmt.Printf("Google Docs API test completed successfully!\n")
 }

@@ -44,14 +44,15 @@ type SlackConfig struct {
 
 // LLMConfig contains LLM provider configuration
 type LLMConfig struct {
-	Provider           string                       `json:"provider"`
-	UseNativeTools     bool                         `json:"useNativeTools,omitempty"`
-	UseAgent           bool                         `json:"useAgent,omitempty"`
-	CustomPrompt       string                       `json:"customPrompt,omitempty"`
-	CustomPromptFile   string                       `json:"customPromptFile,omitempty"`
-	ReplaceToolPrompt  bool                         `json:"replaceToolPrompt,omitempty"`
-	MaxAgentIterations int                          `json:"maxAgentIterations,omitempty"` // Maximum agent iterations (default: 20)
-	Providers          map[string]LLMProviderConfig `json:"providers"`
+	Provider              string                       `json:"provider"`
+	UseNativeTools        bool                         `json:"useNativeTools,omitempty"`
+	UseAgent              bool                         `json:"useAgent,omitempty"`
+	CustomPrompt          string                       `json:"customPrompt,omitempty"`
+	CustomPromptFile      string                       `json:"customPromptFile,omitempty"`
+	CustomPromptGoogleDoc string                       `json:"customPromptGoogleDoc,omitempty"`
+	ReplaceToolPrompt     bool                         `json:"replaceToolPrompt,omitempty"`
+	MaxAgentIterations    int                          `json:"maxAgentIterations,omitempty"` // Maximum agent iterations (default: 20)
+	Providers             map[string]LLMProviderConfig `json:"providers"`
 }
 
 // LLMProviderConfig contains provider-specific settings
@@ -362,6 +363,11 @@ func (c *Config) ApplyEnvironmentVariables() {
 	// Custom prompt override
 	if prompt := os.Getenv("CUSTOM_PROMPT"); prompt != "" {
 		c.LLM.CustomPrompt = prompt
+	}
+
+	// Custom prompt Google Doc override
+	if docID := os.Getenv("CUSTOM_PROMPT_GOOGLE_DOC"); docID != "" {
+		c.LLM.CustomPromptGoogleDoc = docID
 	}
 
 	// Monitoring overrides
