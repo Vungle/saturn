@@ -13,7 +13,7 @@ import (
 
 const (
 	minReloadInterval      = 10 * time.Second
-	defaultShutdownTimeout = 10 * time.Second
+	defaultShutdownTimeout = 60 * time.Second
 )
 
 // ReloadTrigger represents the type of trigger that caused a reload
@@ -68,7 +68,8 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(conte
 				case <-appDone:
 					logger.Info("Application shutdown completed")
 				case <-time.After(defaultShutdownTimeout):
-					logger.WarnKV("Application shutdown timed out", "timeout", defaultShutdownTimeout)
+					logger.WarnKV("Application shutdown timed out, terminating gracefully", "timeout", defaultShutdownTimeout)
+					os.Exit(1)
 				}
 				return nil
 			}
@@ -84,7 +85,8 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(conte
 			case <-appDone:
 				logger.Info("Current application instance shut down, reinitializing...")
 			case <-time.After(defaultShutdownTimeout):
-				logger.WarnKV("Application shutdown timed out, forcing restart", "timeout", defaultShutdownTimeout)
+				logger.WarnKV("Application shutdown timed out, terminating gracefully", "timeout", defaultShutdownTimeout)
+				return fmt.Errorf("application shutdown timeout after %s", defaultShutdownTimeout)
 			}
 
 			// Record reload metrics
@@ -94,7 +96,6 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(conte
 		}
 	}
 }
-
 
 // awaitReloadTrigger waits for a reload trigger
 func awaitReloadTrigger(logger *logging.Logger, interval time.Duration) ReloadTrigger {

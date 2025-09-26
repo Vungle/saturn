@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -650,19 +652,52 @@ func startSlackClient(ctx context.Context, logger *logging.Logger, mcpClients ma
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
+	// Create a channel to signal when Slack client exits
+	slackDone := make(chan error, 1)
+
 	// Start listening for Slack events in a separate goroutine
 	go func() {
+		defer close(slackDone)
 		if err := client.Run(); err != nil {
-			logger.Fatal("Slack client error: %v", err)
+			logger.ErrorKV("Slack client error", "error", err)
+			slackDone <- err
 		}
 	}()
 
 	logger.Info("Slack MCP Client is now running. Waiting for shutdown signal...")
 
-	// Wait for context cancellation (from reload system)
-	<-ctx.Done()
+	// Wait for termination signal or context cancellation
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
-	logger.Info("Shutdown signal received, shutting down...")
+	select {
+	case sig := <-sigChan:
+		logger.Info("Received signal %v, shutting down...", sig)
+	case <-ctx.Done():
+		logger.Info("Context cancelled, shutting down...")
+	case err := <-slackDone:
+		if err != nil {
+			logger.ErrorKV("Slack client exited with error", "error", err)
+		} else {
+			logger.Info("Slack client exited normally")
+		}
+		return // Exit the function if Slack client stopped
+	}
+
+	// Try to close Slack client gracefully (if Close method is available)
+	logger.Info("Stopping Slack client...")
+	if closeErr := client.Close(); closeErr != nil {
+		logger.ErrorKV("Failed to close Slack client gracefully", "error", closeErr)
+	}
+
+	// Wait for Slack client goroutine to finish with a timeout
+	select {
+	case <-slackDone:
+		logger.Info("Slack client stopped")
+	case <-time.After(5 * time.Second):
+		logger.Warn("Slack client stop timed out")
+	}
 
 	// Gracefully close all MCP clients
 	logger.Info("Closing all MCP clients...")
