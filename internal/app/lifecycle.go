@@ -77,7 +77,6 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(conte
 			logger.InfoKV("Reload triggered, shutting down current instance...", "type", trigger.Type)
 
 			// Cancel current application
-			fmt.Println("Canceling current application...")
 			appCancel()
 
 			// Wait for current app to shutdown gracefully
