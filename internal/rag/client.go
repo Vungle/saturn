@@ -141,18 +141,6 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 					searchOpts.DateFilter = dateFilter
 				}
 			}
-
-			// Add other metadata filters
-			// TODO: Make metadata key configurable
-			if len(enhanced.MetadataFilters.BusinessUnits) > 0 {
-				searchOpts.Metadata["business_units"] = strings.Join(enhanced.MetadataFilters.BusinessUnits, ",")
-			}
-			if len(enhanced.MetadataFilters.Regions) > 0 {
-				searchOpts.Metadata["regions"] = strings.Join(enhanced.MetadataFilters.Regions, ",")
-			}
-			if len(enhanced.MetadataFilters.Labels) > 0 {
-				searchOpts.Metadata["labels"] = strings.Join(enhanced.MetadataFilters.Labels, ",")
-			}
 		}
 	} else {
 		enhancedQuery = originalQuery
