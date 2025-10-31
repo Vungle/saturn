@@ -16,6 +16,7 @@ type Client struct {
 	embeddingProvider EmbeddingProvider // Interface for embedding providers (Voyage, OpenAI, etc.)
 	queryEnhancer     *QueryEnhancer
 	llmRegistry       *llm.ProviderRegistry
+	config            map[string]interface{} // Raw config for accessing provider-specific settings
 }
 
 // NewClient creates a new RAG client with simple provider (legacy compatibility)
@@ -32,11 +33,13 @@ func NewClient(ragDatabase string) *Client {
 		_ = simpleProvider.Initialize(context.Background())
 		return &Client{
 			provider: simpleProvider,
+			config:   config,
 		}
 	}
 
 	return &Client{
 		provider: provider,
+		config:   config,
 	}
 }
 
@@ -55,6 +58,7 @@ func NewClientWithProvider(providerType string, config map[string]interface{}) (
 
 	return &Client{
 		provider: provider,
+		config:   config,
 	}, nil
 }
 
@@ -97,8 +101,18 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 	}
 
 	// Build search options
+	// Extract max_results from config, default to 20
+	maxResults := 20
+	if c.config != nil {
+		if maxResultsFloat, ok := c.config["max_results"].(float64); ok {
+			maxResults = int(maxResultsFloat)
+		} else if maxResultsInt, ok := c.config["max_results"].(int); ok {
+			maxResults = maxResultsInt
+		}
+	}
+
 	searchOpts := SearchOptions{
-		Limit:    7, // Default from search.js
+		Limit:    maxResults,
 		Metadata: make(map[string]string),
 	}
 
@@ -129,6 +143,7 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 			}
 
 			// Add other metadata filters
+			// TODO: Make metadata key configurable
 			if len(enhanced.MetadataFilters.BusinessUnits) > 0 {
 				searchOpts.Metadata["business_units"] = strings.Join(enhanced.MetadataFilters.BusinessUnits, ",")
 			}
