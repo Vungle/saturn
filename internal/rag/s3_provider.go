@@ -120,6 +120,7 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 
 		// Add date filter if provided
 		if len(options.DateFilter) > 0 {
+			// todo make date filter configurable
 			filter["report_generated_date"] = map[string]interface{}{
 				"$in": options.DateFilter,
 			}

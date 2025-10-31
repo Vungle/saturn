@@ -755,6 +755,8 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 
 		// Always re-prompt LLM with tool results for synthesis
 		// Construct a new prompt incorporating the original prompt and the tool result
+		// TODO: Include enhanced query information in the re-prompt
+		// so the synthesis LLM knows what specific timeframe and filters were used in the search
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
 		// Start re-prompt span
