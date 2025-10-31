@@ -164,6 +164,61 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 	clientLogger.Info("LLM provider registry initialized successfully")
 
+	// Wire up enhanced RAG search dependencies (query enhancer + Voyage embeddings)
+	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
+		// Determine which LLM registry to use for query enhancement
+		var queryEnhancerRegistry *llm.ProviderRegistry
+
+		if cfg.RAG.QueryEnhancementProvider != "" {
+			// Create a separate LLM registry for query enhancement
+			clientLogger.InfoKV("Creating dedicated LLM registry for RAG query enhancement", "provider", cfg.RAG.QueryEnhancementProvider)
+
+			// Create a minimal config with only the specified provider
+			queryEnhancerConfig := &config.Config{
+				LLM: config.LLMConfig{
+					Provider:  cfg.RAG.QueryEnhancementProvider,
+					Providers: cfg.LLM.Providers, // Reuse all provider configs
+				},
+			}
+
+			queryEnhancerLogger := logging.New("rag-query-enhancer", logLevel)
+			qeRegistry, err := llm.NewProviderRegistry(queryEnhancerConfig, queryEnhancerLogger)
+			if err != nil {
+				clientLogger.ErrorKV("Failed to create query enhancement LLM registry, falling back to main registry", "error", err)
+				queryEnhancerRegistry = registry // Fallback to main registry
+			} else {
+				queryEnhancerRegistry = qeRegistry
+				clientLogger.InfoKV("Created separate LLM registry for query enhancement", "provider", cfg.RAG.QueryEnhancementProvider)
+			}
+		} else {
+			// Reuse the main LLM registry
+			queryEnhancerRegistry = registry
+			clientLogger.Info("Using main LLM registry for query enhancement")
+		}
+
+		// Create embedding provider if configured
+		var embeddingProvider rag.EmbeddingProvider
+		if cfg.RAG.EmbeddingProvider != "" {
+			provider, err := rag.CreateEmbeddingProvider(cfg.RAG.EmbeddingProvider)
+			if err != nil {
+				clientLogger.ErrorKV("Failed to create embedding provider, continuing without embeddings", "provider", cfg.RAG.EmbeddingProvider, "error", err)
+			} else {
+				embeddingProvider = provider
+				clientLogger.InfoKV("Created embedding provider for RAG", "provider", cfg.RAG.EmbeddingProvider)
+			}
+		}
+
+		// Set enhanced search dependencies
+		ragClient.SetEnhancedSearchDependencies(queryEnhancerRegistry, embeddingProvider)
+
+		// Log what was enabled
+		if embeddingProvider != nil {
+			clientLogger.Info("Enabled enhanced RAG search with query enhancement and embeddings")
+		} else {
+			clientLogger.Info("Enabled enhanced RAG search with query enhancement only (no embedding provider)")
+		}
+	}
+
 	// Load custom prompt from file if specified and customPrompt is empty
 	if cfg.LLM.CustomPromptFile != "" && cfg.LLM.CustomPrompt == "" {
 		content, err := os.ReadFile(cfg.LLM.CustomPromptFile)
