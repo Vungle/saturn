@@ -109,10 +109,12 @@ type MCPToolsConfig struct {
 
 // RAGConfig contains RAG system configuration
 type RAGConfig struct {
-	Enabled   bool                         `json:"enabled,omitempty"`
-	Provider  string                       `json:"provider,omitempty"`
-	ChunkSize int                          `json:"chunkSize,omitempty"`
-	Providers map[string]RAGProviderConfig `json:"providers,omitempty"`
+	Enabled                  bool                         `json:"enabled,omitempty"`
+	Provider                 string                       `json:"provider,omitempty"`
+	ChunkSize                int                          `json:"chunkSize,omitempty"`
+	QueryEnhancementProvider string                       `json:"queryEnhancementProvider,omitempty"` // Optional: LLM provider for query enhancement (falls back to main LLM if not set)
+	EmbeddingProvider        string                       `json:"embeddingProvider,omitempty"`        // Optional: Embedding provider (voyage, openai, cohere, etc.)
+	Providers                map[string]RAGProviderConfig `json:"providers,omitempty"`
 }
 
 // RAGProviderConfig contains RAG provider-specific settings

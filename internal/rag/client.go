@@ -5,12 +5,18 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/tuannvm/slack-mcp-client/internal/llm"
 )
 
 // Client wraps vector providers to implement the MCP tool interface
 // This allows the LLM-MCP bridge to treat RAG as a regular MCP tool
 type Client struct {
-	provider VectorProvider
+	provider          VectorProvider
+	embeddingProvider EmbeddingProvider // Interface for embedding providers (Voyage, OpenAI, etc.)
+	queryEnhancer     *QueryEnhancer
+	llmRegistry       *llm.ProviderRegistry
+	config            map[string]interface{} // Raw config for accessing provider-specific settings
 }
 
 // NewClient creates a new RAG client with simple provider (legacy compatibility)
@@ -27,11 +33,13 @@ func NewClient(ragDatabase string) *Client {
 		_ = simpleProvider.Initialize(context.Background())
 		return &Client{
 			provider: simpleProvider,
+			config:   config,
 		}
 	}
 
 	return &Client{
 		provider: provider,
+		config:   config,
 	}
 }
 
@@ -50,7 +58,20 @@ func NewClientWithProvider(providerType string, config map[string]interface{}) (
 
 	return &Client{
 		provider: provider,
+		config:   config,
 	}, nil
+}
+
+// SetEnhancedSearchDependencies sets optional dependencies for enhanced RAG search
+// If not set, will fall back to basic search without query enhancement
+func (c *Client) SetEnhancedSearchDependencies(llmRegistry *llm.ProviderRegistry, embeddingProvider EmbeddingProvider) {
+	c.llmRegistry = llmRegistry
+	c.embeddingProvider = embeddingProvider
+
+	// Initialize query enhancer if LLM registry is available
+	if llmRegistry != nil {
+		c.queryEnhancer = NewQueryEnhancer(llmRegistry)
+	}
 }
 
 // CallTool implements the MCP tool interface for RAG operations
@@ -71,28 +92,87 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	}
 }
 
-// handleRAGSearch processes search requests
+// handleRAGSearch processes search requests with enhanced pipeline
 func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Extract and validate query parameter
-	query, err := c.extractStringParam(args, "query", true)
+	originalQuery, err := c.extractStringParam(args, "query", true)
 	if err != nil {
 		return "", err
 	}
 
-	// Perform search using the provider
-	results, err := c.provider.Search(ctx, query, SearchOptions{})
+	// Build search options
+	// Extract max_results from config, default to 20
+	maxResults := 20
+	if c.config != nil {
+		if maxResultsFloat, ok := c.config["max_results"].(float64); ok {
+			maxResults = int(maxResultsFloat)
+		} else if maxResultsInt, ok := c.config["max_results"].(int); ok {
+			maxResults = maxResultsInt
+		}
+	}
+
+	searchOpts := SearchOptions{
+		Limit:    maxResults,
+		Metadata: make(map[string]string),
+	}
+
+	// Step 1: Get today's date
+	today := GetTodayDate()
+
+	// Step 2: Enhance query with LLM (if available)
+	var enhancedQuery string
+	var dateFilter []string
+
+	if c.queryEnhancer != nil {
+		enhanced, err := c.queryEnhancer.EnhanceQuery(ctx, originalQuery, today)
+		if err != nil {
+			// Log error but continue with original query
+			fmt.Printf("Warning: query enhancement failed: %v\n", err)
+			enhancedQuery = originalQuery
+		} else {
+			enhancedQuery = enhanced.EnhancedQuery
+
+			// Step 3: Expand date range if temporal query
+			if enhanced.MetadataFilters.GeneratedDate != nil {
+				dateFilter, err = ExpandDateRange(*enhanced.MetadataFilters.GeneratedDate, 7)
+				if err != nil {
+					fmt.Printf("Warning: date range expansion failed: %v\n", err)
+				} else {
+					searchOpts.DateFilter = dateFilter
+				}
+			}
+		}
+	} else {
+		enhancedQuery = originalQuery
+	}
+
+	// Step 4: Embed query with embedding provider (if available)
+	if c.embeddingProvider != nil {
+		queryVector, err := c.embeddingProvider.EmbedQuery(ctx, enhancedQuery)
+		if err != nil {
+			return "", fmt.Errorf("failed to embed query: %w", err)
+		}
+		searchOpts.QueryVector = queryVector
+	}
+
+	// Step 5: Perform search using the provider
+	results, err := c.provider.Search(ctx, enhancedQuery, searchOpts)
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
 	}
 
 	// Format results for display
 	if len(results) == 0 {
-		return "No relevant context found for query: '" + query + "'", nil
+		return "No relevant context found for query: '" + originalQuery + "'", nil
 	}
+
+	// Step 6: Sort results by report_generated_date (newest first)
+	// TODO: Add reranking step here in the future
+	sortResultsByDate(results)
 
 	// Build response string
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("Found %d relevant context(s) for '%s':\n", len(results), query))
+	response.WriteString(fmt.Sprintf("Found %d relevant context(s) for '%s':\n", len(results), originalQuery))
 
 	for i, result := range results {
 		response.WriteString(fmt.Sprintf("--- Context %d ---\n", i+1))
@@ -106,6 +186,11 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 			response.WriteString("\n")
 		}
 
+		// Add metadata if available
+		if date, exists := result.Metadata["report_generated_date"]; exists {
+			response.WriteString(fmt.Sprintf("Date: %s\n", date))
+		}
+
 		// Add content
 		response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
 
@@ -116,6 +201,20 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 	}
 
 	return response.String(), nil
+}
+
+// sortResultsByDate sorts results by report_generated_date in descending order (newest first)
+func sortResultsByDate(results []SearchResult) {
+	// Simple bubble sort - adequate for small result sets
+	for i := 0; i < len(results); i++ {
+		for j := i + 1; j < len(results); j++ {
+			dateI := results[i].Metadata["report_generated_date"]
+			dateJ := results[j].Metadata["report_generated_date"]
+			if dateJ > dateI { // Descending order
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
 }
 
 // handleRAGIngest processes document ingestion requests

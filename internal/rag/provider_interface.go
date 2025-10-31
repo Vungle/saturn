@@ -28,6 +28,14 @@ type VectorProvider interface {
 	GetStats(ctx context.Context) (*VectorStoreStats, error)
 }
 
+// EmbeddingProvider defines the interface for embedding model providers
+// This abstraction allows switching between different embedding providers (Voyage, OpenAI, Cohere, etc.)
+type EmbeddingProvider interface {
+	// EmbedQuery generates embeddings for a query string
+	// Returns a float32 slice representing the embedding vector
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
 // FileInfo represents information about a file in the vector store
 type FileInfo struct {
 	ID         string
@@ -40,9 +48,11 @@ type FileInfo struct {
 
 // SearchOptions configures search parameters
 type SearchOptions struct {
-	Limit    int               // Maximum number of results
-	MinScore float32           // Minimum relevance score
-	Metadata map[string]string // Filter by metadata
+	Limit       int               // Maximum number of results
+	MinScore    float32           // Minimum relevance score
+	Metadata    map[string]string // Filter by metadata
+	DateFilter  []string          // Date range filter for report_generated_date (YYYY-MM-DD format)
+	QueryVector []float32         // Pre-computed query embedding vector
 }
 
 // SearchResult represents a search result from the vector store
