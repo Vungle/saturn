@@ -110,27 +110,35 @@ type MCPToolsConfig struct {
 
 // RAGConfig contains RAG system configuration
 type RAGConfig struct {
-	Enabled           bool                         `json:"enabled,omitempty"`
-	Provider          string                       `json:"provider,omitempty"`
-	ChunkSize         int                          `json:"chunkSize,omitempty"`
-	EmbeddingProvider string                       `json:"embeddingProvider,omitempty"` // Optional: Embedding provider (voyage, openai, cohere, etc.)
-	Providers         map[string]RAGProviderConfig `json:"providers,omitempty"`
+	Enabled            bool                                  `json:"enabled,omitempty"`
+	Provider           string                                `json:"provider,omitempty"`
+	ChunkSize          int                                   `json:"chunkSize,omitempty"`
+	EmbeddingProvider  string                                `json:"embeddingProvider,omitempty"` // Optional: Embedding provider (voyage, openai, cohere, etc.)
+	Providers          map[string]RAGProviderConfig          `json:"providers,omitempty"`
+	EmbeddingProviders map[string]RAGEmbeddingProviderConfig `json:"embeddingProviders,omitempty"` // Embedding provider configs
 }
 
 // RAGProviderConfig contains RAG provider-specific settings
 // TODO: Refactor this to use a common interface for all RAG providers, can use environment variables to configure the different providers
 type RAGProviderConfig struct {
 	DatabasePath             string  `json:"databasePath,omitempty"`             // Simple provider: path to JSON database
-	IndexName                string  `json:"indexName,omitempty"`                // OpenAI provider: vector store name
+	IndexName                string  `json:"indexName,omitempty"`                // OpenAI/S3 provider: vector store/index name
 	VectorStoreID            string  `json:"vectorStoreId,omitempty"`            // OpenAI provider: existing vector store ID
 	Dimensions               int     `json:"dimensions,omitempty"`               // OpenAI provider: embedding dimensions
 	SimilarityMetric         string  `json:"similarityMetric,omitempty"`         // OpenAI provider: similarity metric
-	MaxResults               int     `json:"maxResults,omitempty"`               // OpenAI provider: maximum search results
-	ScoreThreshold           float64 `json:"scoreThreshold,omitempty"`           // OpenAI provider: score threshold
+	MaxResults               int     `json:"maxResults,omitempty"`               // OpenAI/S3 provider: maximum search results
+	ScoreThreshold           float64 `json:"scoreThreshold,omitempty"`           // OpenAI/S3 provider: score threshold
 	RewriteQuery             bool    `json:"rewriteQuery,omitempty"`             // OpenAI provider: rewrite query
 	VectorStoreNameRegex     string  `json:"vectorStoreNameRegex,omitempty"`     // OpenAI provider: vector store name regex
 	VectorStoreMetadataKey   string  `json:"vectorStoreMetadataKey,omitempty"`   // OpenAI provider: vector store metadata key
 	VectorStoreMetadataValue string  `json:"vectorStoreMetadataValue,omitempty"` // OpenAI provider: vector store metadata value
+	BucketName               string  `json:"bucketName,omitempty"`               // S3 provider: S3 bucket name
+	Region                   string  `json:"region,omitempty"`                   // S3 provider: AWS region
+}
+
+// RAGEmbeddingProviderConfig contains embedding provider-specific settings
+type RAGEmbeddingProviderConfig struct {
+	APIKey string `json:"apiKey,omitempty"` // API key for the embedding provider
 }
 
 // MonitoringConfig contains monitoring and observability settings

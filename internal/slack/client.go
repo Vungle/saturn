@@ -135,6 +135,22 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 				if openaiConfig, exists := cfg.LLM.Providers["openai"]; exists && openaiConfig.APIKey != "" {
 					ragConfig["api_key"] = openaiConfig.APIKey
 				}
+			case "s3":
+				if providerSettings.BucketName != "" {
+					ragConfig["bucket_name"] = providerSettings.BucketName
+				}
+				if providerSettings.IndexName != "" {
+					ragConfig["index_name"] = providerSettings.IndexName
+				}
+				if providerSettings.Region != "" {
+					ragConfig["region"] = providerSettings.Region
+				}
+				if providerSettings.MaxResults > 0 {
+					ragConfig["max_results"] = providerSettings.MaxResults
+				}
+				if providerSettings.ScoreThreshold > 0 {
+					ragConfig["score_threshold"] = providerSettings.ScoreThreshold
+				}
 			}
 		}
 
@@ -195,7 +211,15 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
 		// Create embedding provider if configured
 		if cfg.RAG.EmbeddingProvider != "" {
-			provider, err := rag.CreateEmbeddingProvider(cfg.RAG.EmbeddingProvider)
+			// Get embedding provider config
+			var embeddingConfig rag.EmbeddingProviderConfig
+			if providerCfg, exists := cfg.RAG.EmbeddingProviders[cfg.RAG.EmbeddingProvider]; exists {
+				embeddingConfig = rag.EmbeddingProviderConfig{
+					APIKey: providerCfg.APIKey,
+				}
+			}
+
+			provider, err := rag.CreateEmbeddingProvider(cfg.RAG.EmbeddingProvider, embeddingConfig)
 			if err != nil {
 				clientLogger.ErrorKV("Failed to create embedding provider, continuing without embeddings", "provider", cfg.RAG.EmbeddingProvider, "error", err)
 			} else {
