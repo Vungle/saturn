@@ -23,16 +23,6 @@ type VoyageClient struct {
 
 // NewVoyageClient creates a new Voyage AI client
 func NewVoyageClient(apiKey string) *VoyageClient {
-	// Debug: Log API key info (first/last chars only for security)
-	first := ""
-	last := ""
-	if len(apiKey) > 8 {
-		first = apiKey[:8]
-		last = apiKey[len(apiKey)-4:]
-	}
-	fmt.Printf("[DEBUG] VoyageClient created - API key length: %d, first 8 chars: '%s', last 4 chars: '%s'\n",
-		len(apiKey), first, last)
-
 	return &VoyageClient{
 		apiKey: apiKey,
 		httpClient: &http.Client{
@@ -75,25 +65,6 @@ type voyageContextualEmbedResponse struct {
 // EmbedQuery embeds a query string using Voyage's contextualized embeddings API
 // Returns the embedding as a []float32
 func (c *VoyageClient) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
-	// Debug: Log API key length (not the actual key for security)
-	fmt.Printf("[DEBUG] Voyage API key length: %d, starts_with: %s, ends_with: %s\n",
-		len(c.apiKey),
-		func() string {
-			if len(c.apiKey) > 8 {
-				return c.apiKey[:8]
-			} else {
-				return c.apiKey
-			}
-		}(),
-		func() string {
-			if len(c.apiKey) > 8 {
-				return c.apiKey[len(c.apiKey)-4:]
-			} else {
-				return ""
-			}
-		}(),
-	)
-
 	// Prepare request payload
 	// inputs is a list of lists: [["query"]] for single query
 	reqBody := voyageContextualEmbedRequest{
@@ -115,18 +86,7 @@ func (c *VoyageClient) EmbedQuery(ctx context.Context, query string) ([]float32,
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	authHeader := fmt.Sprintf("Bearer %s", c.apiKey)
-	req.Header.Set("Authorization", authHeader)
-
-	// Debug: Log API key being used in request
-	first := ""
-	last := ""
-	if len(c.apiKey) > 8 {
-		first = c.apiKey[:8]
-		last = c.apiKey[len(c.apiKey)-4:]
-	}
-	fmt.Printf("[DEBUG] Making Voyage API request - API key length: %d, first 8: '%s', last 4: '%s', URL: %s\n",
-		len(c.apiKey), first, last, voyageAPIURL)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 
 	// Execute request
 	resp, err := c.httpClient.Do(req)

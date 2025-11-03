@@ -217,22 +217,9 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 				embeddingConfig = rag.EmbeddingProviderConfig{
 					APIKey: providerCfg.APIKey,
 				}
-				// Debug: Log API key info
-				first := ""
-				last := ""
-				if len(providerCfg.APIKey) > 8 {
-					first = providerCfg.APIKey[:8]
-					last = providerCfg.APIKey[len(providerCfg.APIKey)-4:]
-				}
-				clientLogger.InfoKV("Extracted embedding provider config from RAG.EmbeddingProviders",
-					"provider", cfg.RAG.EmbeddingProvider,
-					"api_key_length", len(providerCfg.APIKey),
-					"api_key_first8", first,
-					"api_key_last4", last)
 			} else {
 				clientLogger.WarnKV("Embedding provider config not found in RAG.EmbeddingProviders",
-					"provider", cfg.RAG.EmbeddingProvider,
-					"available_providers", fmt.Sprintf("%+v", cfg.RAG.EmbeddingProviders))
+					"provider", cfg.RAG.EmbeddingProvider)
 			}
 
 			provider, err := rag.CreateEmbeddingProvider(cfg.RAG.EmbeddingProvider, embeddingConfig)
