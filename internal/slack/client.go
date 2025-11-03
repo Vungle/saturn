@@ -697,7 +697,6 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		"thread_ts":  threadTS,
 	}
 
-	// Step A: Pass query metadata through extraArgs for RAG search
 	if queryMetadata != nil {
 		extraArgs["query_metadata"] = queryMetadata
 		c.logger.DebugKV("Added query metadata to extra arguments", "has_date", queryMetadata.GeneratedDate != nil)

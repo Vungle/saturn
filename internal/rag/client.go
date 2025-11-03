@@ -121,7 +121,6 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		}
 	}
 
-	// Step 4: Embed query with embedding provider (if available)
 	if c.embeddingProvider != nil {
 		queryVector, err := c.embeddingProvider.EmbedQuery(ctx, query)
 		if err != nil {
@@ -130,7 +129,6 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		searchOpts.QueryVector = queryVector
 	}
 
-	// Step 5: Perform search using the provider
 	results, err := c.provider.Search(ctx, query, searchOpts)
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
@@ -141,7 +139,6 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		return "No relevant context found for query: '" + query + "'", nil
 	}
 
-	// Step 6: Sort results by report_generated_date (newest first)
 	// TODO: Add reranking step here in the future
 	sortResultsByDate(results)
 
