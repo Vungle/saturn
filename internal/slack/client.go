@@ -37,6 +37,7 @@ type Client struct {
 	historyLimit    int
 	discoveredTools map[string]mcp.ToolInfo
 	tracingHandler  observability.TracingHandler
+	queryEnhancer   *rag.QueryEnhancer // Query enhancer for all queries (not just RAG)
 }
 
 // Message represents a message in the conversation history
@@ -164,58 +165,43 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 	clientLogger.Info("LLM provider registry initialized successfully")
 
-	// Wire up enhanced RAG search dependencies (query enhancer + Voyage embeddings)
-	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
-		// Determine which LLM registry to use for query enhancement
-		var queryEnhancerRegistry *llm.ProviderRegistry
+	// Initialize query enhancer for ALL queries (not just RAG)
+	var queryEnhancer *rag.QueryEnhancer
 
-		if cfg.RAG.QueryEnhancementProvider != "" {
-			// Create a separate LLM registry for query enhancement
-			clientLogger.InfoKV("Creating dedicated LLM registry for RAG query enhancement", "provider", cfg.RAG.QueryEnhancementProvider)
+	if cfg.QueryEnhancementProvider != "" {
+		// Create a separate LLM registry for query enhancement
+		clientLogger.InfoKV("Creating dedicated LLM registry for query enhancement", "provider", cfg.QueryEnhancementProvider)
 
-			// Create a minimal config with only the specified provider
-			queryEnhancerConfig := &config.Config{
-				LLM: config.LLMConfig{
-					Provider:  cfg.RAG.QueryEnhancementProvider,
-					Providers: cfg.LLM.Providers, // Reuse all provider configs
-				},
-			}
-
-			queryEnhancerLogger := logging.New("rag-query-enhancer", logLevel)
-			qeRegistry, err := llm.NewProviderRegistry(queryEnhancerConfig, queryEnhancerLogger)
-			if err != nil {
-				clientLogger.ErrorKV("Failed to create query enhancement LLM registry, falling back to main registry", "error", err)
-				queryEnhancerRegistry = registry // Fallback to main registry
-			} else {
-				queryEnhancerRegistry = qeRegistry
-				clientLogger.InfoKV("Created separate LLM registry for query enhancement", "provider", cfg.RAG.QueryEnhancementProvider)
-			}
-		} else {
-			// Reuse the main LLM registry
-			queryEnhancerRegistry = registry
-			clientLogger.Info("Using main LLM registry for query enhancement")
+		// Create a minimal config with only the specified provider
+		queryEnhancerConfig := &config.Config{
+			LLM: config.LLMConfig{
+				Provider:  cfg.QueryEnhancementProvider,
+				Providers: cfg.LLM.Providers, // Reuse all provider configs
+			},
 		}
 
+		queryEnhancerLogger := logging.New("query-enhancer", logLevel)
+		qeRegistry, err := llm.NewProviderRegistry(queryEnhancerConfig, queryEnhancerLogger)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to create query enhancement LLM registry", "error", err)
+		} else {
+			queryEnhancer = rag.NewQueryEnhancer(qeRegistry)
+			clientLogger.InfoKV("Created query enhancer for all queries", "provider", cfg.QueryEnhancementProvider)
+		}
+	}
+
+	// Wire up RAG embedding provider
+	// Note: Query enhancement is now done in Slack client before LLM call
+	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
 		// Create embedding provider if configured
-		var embeddingProvider rag.EmbeddingProvider
 		if cfg.RAG.EmbeddingProvider != "" {
 			provider, err := rag.CreateEmbeddingProvider(cfg.RAG.EmbeddingProvider)
 			if err != nil {
 				clientLogger.ErrorKV("Failed to create embedding provider, continuing without embeddings", "provider", cfg.RAG.EmbeddingProvider, "error", err)
 			} else {
-				embeddingProvider = provider
-				clientLogger.InfoKV("Created embedding provider for RAG", "provider", cfg.RAG.EmbeddingProvider)
+				ragClient.SetEmbeddingProvider(provider)
+				clientLogger.InfoKV("Enabled RAG embeddings", "provider", cfg.RAG.EmbeddingProvider)
 			}
-		}
-
-		// Set enhanced search dependencies
-		ragClient.SetEnhancedSearchDependencies(queryEnhancerRegistry, embeddingProvider)
-
-		// Log what was enabled
-		if embeddingProvider != nil {
-			clientLogger.Info("Enabled enhanced RAG search with query enhancement and embeddings")
-		} else {
-			clientLogger.Info("Enabled enhanced RAG search with query enhancement only (no embedding provider)")
 		}
 	}
 
@@ -256,6 +242,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
 		discoveredTools: discoveredTools,
 		tracingHandler:  tracingHandler,
+		queryEnhancer:   queryEnhancer, // Query enhancer for all queries
 	}, nil
 }
 
@@ -473,16 +460,37 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
 
+	var enhancedQuery string
+	var queryMetadata *rag.MetadataFilters
+
+	if c.queryEnhancer != nil {
+		c.logger.DebugKV("Enhancing user query before LLM call", "original", userPrompt)
+		today := time.Now().Format("2006-01-02") // Format as YYYY-MM-DD
+		enhanced, err := c.queryEnhancer.EnhanceQuery(ctx, userPrompt, today)
+		if err != nil {
+			c.logger.WarnKV("Query enhancement failed, using original query", "error", err)
+			enhancedQuery = userPrompt
+		} else {
+			enhancedQuery = enhanced.EnhancedQuery
+			queryMetadata = &enhanced.MetadataFilters
+			c.logger.DebugKV("Query enhanced successfully", "enhanced", enhancedQuery, "has_metadata", queryMetadata != nil)
+		}
+	} else {
+		// No query enhancer configured, use original query
+		enhancedQuery = userPrompt
+	}
+
 	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
+		// Use ENHANCED query instead of original userPrompt
 		var finalPrompt string
 		customPrompt := c.cfg.LLM.CustomPrompt
 		if customPrompt != "" {
-			// Use custom prompt as system instruction, then add user prompt
-			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, userPrompt)
+			// Use custom prompt as system instruction, then add enhanced query
+			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, enhancedQuery)
 			c.logger.DebugKV("Using custom prompt as system instruction", "custom_prompt_length", len(customPrompt))
 		} else {
-			finalPrompt = userPrompt
+			finalPrompt = enhancedQuery
 		}
 
 		llmCtx, llmSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-call", c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model, finalPrompt, map[string]interface{}{
@@ -528,7 +536,9 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 		llmSpan.End()
 
 		// Process the LLM response through the MCP pipeline
-		c.processLLMResponseAndReply(llmCtx, llmResponse, userPrompt, channelID, threadTS)
+		// Pass enhancedQuery instead of userPrompt so re-prompt uses enhanced query
+		// Pass queryMetadata so it can be forwarded to RAG search
+		c.processLLMResponseAndReply(llmCtx, llmResponse, enhancedQuery, queryMetadata, channelID, threadTS)
 	} else {
 		// Agent path with enhanced tracing
 		agentCtx, agentSpan := c.tracingHandler.StartSpan(ctx, "llm-agent-call", "generation", userPrompt, map[string]string{
@@ -671,7 +681,7 @@ func (c *Client) estimateToolTokenUsage(toolName, prompt, response string) int {
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 // Incorporates logic previously in LLMClient.ProcessToolResponse.
-func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
+func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmResponse *llms.ContentChoice, userPrompt string, queryMetadata *rag.MetadataFilters, channelID, threadTS string) {
 	// Start tool processing span
 	ctx, span := c.tracingHandler.StartSpan(traceCtx, "tool-processing", "span", userPrompt, map[string]string{
 		"channel_id":      channelID,
@@ -686,6 +696,13 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		"channel_id": channelID,
 		"thread_ts":  threadTS,
 	}
+
+	// Step A: Pass query metadata through extraArgs for RAG search
+	if queryMetadata != nil {
+		extraArgs["query_metadata"] = queryMetadata
+		c.logger.DebugKV("Added query metadata to extra arguments", "has_date", queryMetadata.GeneratedDate != nil)
+	}
+
 	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
 	// Create a context with timeout for tool processing
@@ -754,9 +771,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		c.logger.DebugKV("Tool result", "result", logging.TruncateForLog(finalResponse, 500))
 
 		// Always re-prompt LLM with tool results for synthesis
-		// Construct a new prompt incorporating the original prompt and the tool result
-		// TODO: replace original userPrompt with enhance user prompt
-		// so the synthesis LLM knows what specific timeframe and filters were used in the search
+		// Construct a new prompt incorporating the enhanced query and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
 		// Start re-prompt span
