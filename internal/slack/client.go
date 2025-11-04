@@ -490,16 +490,30 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	var enhancedQuery string
 	var queryMetadata *rag.MetadataFilters
 
-	// 1. Query enhancement logging
 	if c.queryEnhancer != nil {
 		today := time.Now().Format("2006-01-02") // Format as YYYY-MM-DD
 		fmt.Printf("[Query Enhancement] INPUT: '%s'\n", userPrompt)
 		fmt.Printf("[Query Enhancement] Today's date: %s\n", today)
 
-		enhanced, err := c.queryEnhancer.EnhanceQuery(ctx, userPrompt, today)
+		// Start query enhancement span
+		qeCtx, qeSpan := c.tracingHandler.StartLLMSpan(ctx, "query-enhancement",
+			c.cfg.LLM.Providers[c.cfg.QueryEnhancementProvider].Model,
+			userPrompt,
+			map[string]interface{}{
+				"today":            today,
+				"enhancement_type": "temporal_detection",
+			})
+
+		startTime := time.Now()
+		enhanced, err := c.queryEnhancer.EnhanceQuery(qeCtx, userPrompt, today)
+		duration := time.Since(startTime)
+
+		c.tracingHandler.SetDuration(qeSpan, duration)
+
 		if err != nil {
 			fmt.Printf("[Query Enhancement] ERROR: %v, using original query\n", err)
 			c.logger.WarnKV("Query enhancement failed, using original query", "error", err)
+			c.tracingHandler.RecordError(qeSpan, err, "ERROR")
 			enhancedQuery = userPrompt
 		} else {
 			enhancedQuery = enhanced.EnhancedQuery
@@ -512,8 +526,17 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 				fmt.Printf("[Query Enhancement] Non-temporal query (no date metadata)\n")
 			}
 
+			// Set output and metadata for tracing
+			c.tracingHandler.SetOutput(qeSpan, enhancedQuery)
+			if queryMetadata != nil && queryMetadata.GeneratedDate != nil {
+				c.tracingHandler.RecordSuccess(qeSpan, fmt.Sprintf("Temporal query detected: %s", *queryMetadata.GeneratedDate))
+			} else {
+				c.tracingHandler.RecordSuccess(qeSpan, "Non-temporal query")
+			}
+
 			c.logger.DebugKV("Query enhanced successfully", "enhanced", enhancedQuery, "has_metadata", queryMetadata != nil)
 		}
+		qeSpan.End()
 	} else {
 		fmt.Printf("[Query Enhancement] DISABLED: Using original query\n")
 		// No query enhancer configured, use original query
