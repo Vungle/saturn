@@ -180,6 +180,12 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 					// Convert value to string
 					searchResult.Metadata[key] = fmt.Sprintf("%v", value)
 				}
+
+				// Log doc_id and report_generated_date
+				vectorKey := *vector.Key
+				reportDate := searchResult.Metadata["report_generated_date"]
+				fmt.Printf("[S3 Vector] vector key: %s, report_generated_date: %s, score: %.4f\n",
+					vectorKey, reportDate, score)
 			}
 		}
 

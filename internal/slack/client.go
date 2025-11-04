@@ -490,19 +490,32 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	var enhancedQuery string
 	var queryMetadata *rag.MetadataFilters
 
+	// 1. Query enhancement logging
 	if c.queryEnhancer != nil {
-		c.logger.DebugKV("Enhancing user query before LLM call", "original", userPrompt)
 		today := time.Now().Format("2006-01-02") // Format as YYYY-MM-DD
+		fmt.Printf("[Query Enhancement] INPUT: '%s'\n", userPrompt)
+		fmt.Printf("[Query Enhancement] Today's date: %s\n", today)
+
 		enhanced, err := c.queryEnhancer.EnhanceQuery(ctx, userPrompt, today)
 		if err != nil {
+			fmt.Printf("[Query Enhancement] ERROR: %v, using original query\n", err)
 			c.logger.WarnKV("Query enhancement failed, using original query", "error", err)
 			enhancedQuery = userPrompt
 		} else {
 			enhancedQuery = enhanced.EnhancedQuery
 			queryMetadata = &enhanced.MetadataFilters
+
+			fmt.Printf("[Query Enhancement] OUTPUT: '%s'\n", enhancedQuery)
+			if queryMetadata != nil && queryMetadata.GeneratedDate != nil {
+				fmt.Printf("[Query Enhancement] Detected temporal query with date: %s\n", *queryMetadata.GeneratedDate)
+			} else {
+				fmt.Printf("[Query Enhancement] Non-temporal query (no date metadata)\n")
+			}
+
 			c.logger.DebugKV("Query enhanced successfully", "enhanced", enhancedQuery, "has_metadata", queryMetadata != nil)
 		}
 	} else {
+		fmt.Printf("[Query Enhancement] DISABLED: Using original query\n")
 		// No query enhancer configured, use original query
 		enhancedQuery = userPrompt
 	}

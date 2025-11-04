@@ -106,19 +106,26 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		Metadata: make(map[string]string),
 	}
 
+	// 2. Date filter logging
 	if queryMetadataRaw, ok := args["query_metadata"]; ok {
 		if metadata, ok := queryMetadataRaw.(*MetadataFilters); ok && metadata != nil {
 			// Extract date filter if present
 			if metadata.GeneratedDate != nil {
+				fmt.Printf("[RAG Date Filter] Detected temporal query, base date: %s\n", *metadata.GeneratedDate)
 				dateFilter, err := ExpandDateRange(*metadata.GeneratedDate, 7)
 				if err != nil {
-					fmt.Printf("Warning: date range expansion failed: %v\n", err)
+					fmt.Printf("[RAG Date Filter] ERROR: Date range expansion failed: %v\n", err)
 				} else {
 					searchOpts.DateFilter = dateFilter
-					fmt.Printf("Applied date filter from metadata: %v\n", dateFilter)
+					fmt.Printf("[RAG Date Filter] Applied date filter: %v (expanded 7 days backwards from %s)\n",
+						dateFilter, *metadata.GeneratedDate)
 				}
+			} else {
+				fmt.Printf("[RAG Date Filter] No date filter - non-temporal query\n")
 			}
 		}
+	} else {
+		fmt.Printf("[RAG Date Filter] No query metadata provided\n")
 	}
 
 	if c.embeddingProvider != nil {
@@ -128,6 +135,13 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		}
 		searchOpts.QueryVector = queryVector
 	}
+
+	// 3. S3 search parameters logging
+	fmt.Printf("[RAG Search] Query: '%s'\n", query)
+	fmt.Printf("[RAG Search] Max results: %d\n", searchOpts.Limit)
+	fmt.Printf("[RAG Search] Has embedding vector: %v (dimensions: %d)\n",
+		len(searchOpts.QueryVector) > 0, len(searchOpts.QueryVector))
+	fmt.Printf("[RAG Search] Date filter count: %d dates\n", len(searchOpts.DateFilter))
 
 	results, err := c.provider.Search(ctx, query, searchOpts)
 	if err != nil {
