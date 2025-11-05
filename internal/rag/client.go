@@ -189,9 +189,44 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		len(searchOpts.QueryVector) > 0, len(searchOpts.QueryVector))
 	fmt.Printf("[RAG Search] Date filter count: %d dates\n", len(searchOpts.DateFilter))
 
-	results, err := c.provider.Search(ctx, query, searchOpts)
-	if err != nil {
-		return "", fmt.Errorf("search failed: %w", err)
+	// 4. Vector search/retrieval with tracing
+	var results []SearchResult
+	if tracer, ok := c.tracingHandler.(observability.TracingHandler); ok && tracer != nil {
+		// Create retriever span for vector store query
+		retrieverCtx, retrieverSpan := tracer.StartSpan(ctx, "vector-search", "retriever", query, map[string]string{
+			"provider":             fmt.Sprintf("%T", c.provider),
+			"max_results":          fmt.Sprintf("%d", searchOpts.Limit),
+			"has_embedding_vector": fmt.Sprintf("%t", len(searchOpts.QueryVector) > 0),
+			"embedding_dimensions": fmt.Sprintf("%d", len(searchOpts.QueryVector)),
+			"date_filter_count":    fmt.Sprintf("%d", len(searchOpts.DateFilter)),
+		})
+
+		startTime := time.Now()
+		searchResults, err := c.provider.Search(retrieverCtx, query, searchOpts)
+		duration := time.Since(startTime)
+
+		tracer.SetDuration(retrieverSpan, duration)
+
+		if err != nil {
+			tracer.RecordError(retrieverSpan, err, "ERROR")
+			retrieverSpan.End()
+			return "", fmt.Errorf("search failed: %w", err)
+		}
+
+		results = searchResults
+
+		// Set output with result summary
+		tracer.SetOutput(retrieverSpan, fmt.Sprintf("Retrieved %d documents from vector store (duration: %v)",
+			len(results), duration))
+		tracer.RecordSuccess(retrieverSpan, fmt.Sprintf("Vector search completed: %d results", len(results)))
+		retrieverSpan.End()
+	} else {
+		// No tracing, just call search directly
+		searchResults, err := c.provider.Search(ctx, query, searchOpts)
+		if err != nil {
+			return "", fmt.Errorf("search failed: %w", err)
+		}
+		results = searchResults
 	}
 
 	// Format results for display

@@ -773,10 +773,6 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 
 	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
-	// Create a context with timeout for tool processing
-	toolCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel()
-
 	// --- Process Tool Response (Logic from LLMClient.ProcessToolResponse) ---
 	var finalResponse string
 	var isToolResult bool
@@ -804,11 +800,16 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 			argsJSON, _ := json.Marshal(toolCall.Args)
 
 			// Start tool execution span with tool arguments as input
-			_, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "tool", string(argsJSON), map[string]string{
+			// IMPORTANT: Use the returned context so child spans (embedding, retriever) are properly nested
+			toolExecCtx, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "tool", string(argsJSON), map[string]string{
 				"bridge_available": "true",
 				"response_type":    "processing",
 				"tool_name":        toolCall.Tool,
 			})
+
+			// Create a context with timeout from the span context
+			toolCtx, cancel := context.WithTimeout(toolExecCtx, 1*time.Minute)
+			defer cancel()
 
 			startTime := time.Now()
 			// Execute the tool call
