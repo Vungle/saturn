@@ -62,9 +62,16 @@ type voyageContextualEmbedResponse struct {
 	} `json:"usage"`
 }
 
+// EmbeddingResult contains the embedding vector and token usage
+type EmbeddingResult struct {
+	Embedding  []float32
+	TokensUsed int
+	Model      string
+}
+
 // EmbedQuery embeds a query string using Voyage's contextualized embeddings API
-// Returns the embedding as a []float32
-func (c *VoyageClient) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+// Returns the embedding vector and token usage
+func (c *VoyageClient) EmbedQuery(ctx context.Context, query string) (*EmbeddingResult, error) {
 	// Prepare request payload
 	// inputs is a list of lists: [["query"]] for single query
 	reqBody := voyageContextualEmbedRequest{
@@ -126,5 +133,9 @@ func (c *VoyageClient) EmbedQuery(ctx context.Context, query string) ([]float32,
 		return nil, fmt.Errorf("empty embedding vector")
 	}
 
-	return embedding, nil
+	return &EmbeddingResult{
+		Embedding:  embedding,
+		TokensUsed: voyageResp.Usage.TotalTokens,
+		Model:      voyageResp.Model,
+	}, nil
 }

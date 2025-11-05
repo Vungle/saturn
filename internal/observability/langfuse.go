@@ -197,17 +197,23 @@ func (p *LangfuseProvider) SetOutput(span OtelTrace.Span, output string) {
 }
 
 func (p *LangfuseProvider) SetTokenUsage(span OtelTrace.Span, promptTokens, completionTokens, reasoningTokens, totalTokens int) {
-	// Langfuse usage format
+	// Langfuse usage format - uses "input", "output", "total" field names
+	// Map our standard token names to Langfuse's expected format
 	usageDetails := map[string]int{
-		"prompt_tokens":     promptTokens,
-		"completion_tokens": completionTokens,
-		"total_tokens":      totalTokens,
-		"reasoning_tokens":  reasoningTokens,
+		"input":  promptTokens,
+		"output": completionTokens,
+		"total":  totalTokens,
+	}
+
+	// Add reasoning tokens as a separate metadata field since Langfuse doesn't have a standard field for it
+	if reasoningTokens > 0 {
+		usageDetails["reasoning_tokens"] = reasoningTokens
 	}
 
 	if usageJSON, err := json.Marshal(usageDetails); err == nil {
 		span.SetAttributes(
 			attribute.String("langfuse.observation.usage_details", string(usageJSON)),
+			// Also set OpenTelemetry standard fields for compatibility
 			attribute.Int("llm.token_count.prompt_tokens", promptTokens),
 			attribute.Int("llm.token_count.completion_tokens", completionTokens),
 			attribute.Int("llm.token_count.total_tokens", totalTokens),

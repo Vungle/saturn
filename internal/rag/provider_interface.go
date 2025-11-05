@@ -32,8 +32,8 @@ type VectorProvider interface {
 // This abstraction allows switching between different embedding providers (Voyage, OpenAI, Cohere, etc.)
 type EmbeddingProvider interface {
 	// EmbedQuery generates embeddings for a query string
-	// Returns a float32 slice representing the embedding vector
-	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+	// Returns embedding result with vector, token usage, and model info
+	EmbedQuery(ctx context.Context, query string) (*EmbeddingResult, error)
 }
 
 // FileInfo represents information about a file in the vector store

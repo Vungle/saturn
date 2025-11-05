@@ -257,6 +257,12 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	// Initialize observability
 	tracingHandler := observability.NewTracingHandler(cfg, clientLogger)
 
+	// Wire up tracing handler to RAG client for embedding span tracking
+	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
+		ragClient.SetTracingHandler(tracingHandler)
+		clientLogger.DebugKV("Set tracing handler on RAG client", "client", "rag")
+	}
+
 	// --- Create and return Client instance ---
 	return &Client{
 		logger:          clientLogger,

@@ -5,6 +5,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/tuannvm/slack-mcp-client/internal/observability"
 )
 
 // Client wraps vector providers to implement the MCP tool interface
@@ -13,6 +16,7 @@ type Client struct {
 	provider          VectorProvider
 	embeddingProvider EmbeddingProvider      // Interface for embedding providers (Voyage, OpenAI, etc.)
 	config            map[string]interface{} // Raw config for accessing provider-specific settings
+	tracingHandler    interface{}            // Tracing handler for observability (optional)
 }
 
 // NewClient creates a new RAG client with simple provider (legacy compatibility)
@@ -62,6 +66,11 @@ func NewClientWithProvider(providerType string, config map[string]interface{}) (
 // Query enhancement is now done before RAG search in the Slack client layer
 func (c *Client) SetEmbeddingProvider(embeddingProvider EmbeddingProvider) {
 	c.embeddingProvider = embeddingProvider
+}
+
+// SetTracingHandler sets the tracing handler for observability
+func (c *Client) SetTracingHandler(tracingHandler interface{}) {
+	c.tracingHandler = tracingHandler
 }
 
 // CallTool implements the MCP tool interface for RAG operations
@@ -129,11 +138,48 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 	}
 
 	if c.embeddingProvider != nil {
-		queryVector, err := c.embeddingProvider.EmbedQuery(ctx, query)
-		if err != nil {
-			return "", fmt.Errorf("failed to embed query: %w", err)
+		// Create embedding span if tracing is enabled
+		var embResult *EmbeddingResult
+		if tracer, ok := c.tracingHandler.(observability.TracingHandler); ok && tracer != nil {
+			embCtx, embSpan := tracer.StartSpan(ctx, "query-embedding-creation", "embedding", query, map[string]string{
+				"provider": "voyage",
+			})
+
+			startTime := time.Now()
+			result, err := c.embeddingProvider.EmbedQuery(embCtx, query)
+			duration := time.Since(startTime)
+
+			tracer.SetDuration(embSpan, duration)
+
+			if err != nil {
+				tracer.RecordError(embSpan, err, "ERROR")
+				embSpan.End()
+				return "", fmt.Errorf("failed to embed query: %w", err)
+			}
+
+			embResult = result
+
+			// Set usage and cost details
+
+			// Set token usage (input tokens only for embeddings)
+			tracer.SetTokenUsage(embSpan, result.TokensUsed, 0, 0, result.TokensUsed)
+
+			// Set output: embedding dimensions
+			tracer.SetOutput(embSpan, fmt.Sprintf("Generated %d-dimensional embedding (%d tokens)",
+				len(result.Embedding), result.TokensUsed))
+
+			tracer.RecordSuccess(embSpan, fmt.Sprintf("Embedding generated: model=%s", result.Model))
+			embSpan.End()
+		} else {
+			// No tracing, just call embedding
+			result, err := c.embeddingProvider.EmbedQuery(ctx, query)
+			if err != nil {
+				return "", fmt.Errorf("failed to embed query: %w", err)
+			}
+			embResult = result
 		}
-		searchOpts.QueryVector = queryVector
+
+		searchOpts.QueryVector = embResult.Embedding
 	}
 
 	// 3. S3 search parameters logging
