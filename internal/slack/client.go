@@ -783,41 +783,51 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		toolProcessingErr = nil
 		c.logger.Warn("LLMMCPBridge is nil, skipping tool processing")
 	} else {
-		// Extract tool name before execution
-		executedToolName := c.extractToolNameFromResponse(llmResponse.Content)
-
-		// Start tool execution span
-		_, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "event", "", map[string]string{
-			"bridge_available": "true",
-			"response_type":    "processing",
-			"tool_name":        executedToolName,
-		})
-		startTime := time.Now()
-		// Process the response through the bridge
-		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(toolCtx, llmResponse, userPrompt, extraArgs)
-		toolDuration := time.Since(startTime)
-		c.tracingHandler.SetDuration(toolExecSpan, toolDuration)
+		// Extract tool call from LLM response using bridge's logic (single source of truth)
+		toolCall, err := c.llmMCPBridge.ExtractToolCall(llmResponse)
 		if err != nil {
-			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+			finalResponse = fmt.Sprintf("Sorry, I encountered an error extracting tool call: %v", err)
 			isToolResult = false
-			toolProcessingErr = err // Store the error
-			c.tracingHandler.RecordError(toolExecSpan, err, "ERROR")
-		} else {
-			// If the processed response is different from the original, a tool was executed
-			if processedResponse != llmResponse.Content {
+			toolProcessingErr = err
+			c.logger.ErrorKV("Failed to extract tool call", "error", err)
+		} else if toolCall != nil {
+			// Tool call detected - execute it with tracing
+			c.logger.InfoKV("Tool call detected", "tool", toolCall.Tool)
+
+			// Marshal args for tracing
+			argsJSON, _ := json.Marshal(toolCall.Args)
+
+			// Start tool execution span with tool arguments as input
+			_, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "tool", string(argsJSON), map[string]string{
+				"bridge_available": "true",
+				"response_type":    "processing",
+				"tool_name":        toolCall.Tool,
+			})
+
+			startTime := time.Now()
+			// Execute the tool call
+			processedResponse, err := c.llmMCPBridge.ExecuteToolCall(toolCtx, toolCall, extraArgs)
+			toolDuration := time.Since(startTime)
+			c.tracingHandler.SetDuration(toolExecSpan, toolDuration)
+
+			if err != nil {
+				finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+				isToolResult = false
+				toolProcessingErr = err
+				c.tracingHandler.RecordError(toolExecSpan, err, "ERROR")
+			} else {
 				finalResponse = processedResponse
 				isToolResult = true
 				c.tracingHandler.SetOutput(toolExecSpan, processedResponse)
 				c.tracingHandler.RecordSuccess(toolExecSpan, "Tool executed successfully")
-			} else {
-				// No tool was executed
-				finalResponse = llmResponse.Content
-				isToolResult = false
-				c.tracingHandler.SetOutput(toolExecSpan, "No tool execution required")
-				c.tracingHandler.RecordSuccess(toolExecSpan, "No tool processing needed")
 			}
+			toolExecSpan.End()
+		} else {
+			// No tool call detected - just use LLM response content
+			finalResponse = llmResponse.Content
+			isToolResult = false
+			c.logger.Debug("No tool call detected, using LLM response as-is")
 		}
-		toolExecSpan.End()
 	}
 	// --- End of Process Tool Response Logic ---
 
