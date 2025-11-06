@@ -320,6 +320,15 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 		p.logger.DebugKV("Adding functions for tools", "tools", len(options.Tools))
 	}
 
+	// ThinkingMode: Apply if specified, otherwise use default
+	// https://github.com/tmc/langchaingo/blob/main/llms/reasoning.go
+	thinkingMode := options.ThinkingMode
+	if thinkingMode == "" {
+		thinkingMode = llms.ThinkingModeAuto // Default to Auto for better reasoning
+	}
+	callOptions = append(callOptions, llms.WithThinkingMode(thinkingMode))
+	p.logger.DebugKV("Adding ThinkingMode option", "mode", thinkingMode)
+
 	// Note: options.TargetProvider is handled during factory creation, not here.
 
 	return callOptions
