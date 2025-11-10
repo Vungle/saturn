@@ -202,6 +202,13 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 				} else {
 					s.logger.DebugKV("S3 vector result", "vector_key", vectorKey, "score", score)
 				}
+			} else {
+				// Failed to unmarshal metadata - skip this result
+				s.logger.ErrorKV("Failed to unmarshal vector metadata, skipping result",
+					"vector_key", *vector.Key,
+					"score", score,
+					"error", err)
+				continue
 			}
 		}
 
