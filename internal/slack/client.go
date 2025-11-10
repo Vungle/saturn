@@ -536,16 +536,16 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 			queryMetadata = &enhanced.MetadataFilters
 
 			fmt.Printf("[Query Enhancement] OUTPUT: '%s'\n", enhancedQuery)
-			if queryMetadata != nil && queryMetadata.GeneratedDate != nil {
-				fmt.Printf("[Query Enhancement] Detected temporal query with date: %s\n", *queryMetadata.GeneratedDate)
+			if queryMetadata != nil && len(queryMetadata.Dates) > 0 {
+				fmt.Printf("[Query Enhancement] Detected temporal query with %d dates: %v\n", len(queryMetadata.Dates), queryMetadata.Dates)
 			} else {
 				fmt.Printf("[Query Enhancement] Non-temporal query (no date metadata)\n")
 			}
 
 			// Set output and metadata for tracing
 			c.tracingHandler.SetOutput(qeSpan, enhancedQuery)
-			if queryMetadata != nil && queryMetadata.GeneratedDate != nil {
-				c.tracingHandler.RecordSuccess(qeSpan, fmt.Sprintf("Temporal query detected: %s", *queryMetadata.GeneratedDate))
+			if queryMetadata != nil && len(queryMetadata.Dates) > 0 {
+				c.tracingHandler.RecordSuccess(qeSpan, fmt.Sprintf("Temporal query detected: %d dates", len(queryMetadata.Dates)))
 			} else {
 				c.tracingHandler.RecordSuccess(qeSpan, "Non-temporal query")
 			}
@@ -778,7 +778,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 
 	if queryMetadata != nil {
 		extraArgs["query_metadata"] = queryMetadata
-		c.logger.DebugKV("Added query metadata to extra arguments", "has_date", queryMetadata.GeneratedDate != nil)
+		c.logger.DebugKV("Added query metadata to extra arguments", "date_count", len(queryMetadata.Dates))
 	}
 
 	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)

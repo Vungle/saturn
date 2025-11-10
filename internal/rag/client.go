@@ -118,28 +118,13 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 	// 2. Date filter logging
 	if queryMetadataRaw, ok := args["query_metadata"]; ok {
 		if metadata, ok := queryMetadataRaw.(*MetadataFilters); ok && metadata != nil {
-			// Extract date filter if present
-			if metadata.GeneratedDate != nil {
-				fmt.Printf("[RAG Date Filter] Detected temporal query, base date: %s\n", *metadata.GeneratedDate)
+			// Extract date filter if present (LLM provides the exact list of dates)
+			if len(metadata.Dates) > 0 {
+				fmt.Printf("[RAG Date Filter] Detected temporal query with %d dates from LLM\n", len(metadata.Dates))
+				fmt.Printf("[RAG Date Filter] Dates: %v\n", metadata.Dates)
 
-				// Get date range window from config, default to 7 if date filtering is active
-				dateRangeWindow := 7
-				if c.config != nil {
-					if window, ok := c.config["date_range_window_days"].(int); ok && window > 0 {
-						dateRangeWindow = window
-					} else if windowFloat, ok := c.config["date_range_window_days"].(float64); ok && windowFloat > 0 {
-						dateRangeWindow = int(windowFloat)
-					}
-				}
-
-				dateFilter, err := ExpandDateRange(*metadata.GeneratedDate, dateRangeWindow)
-				if err != nil {
-					fmt.Printf("[RAG Date Filter] ERROR: Date range expansion failed: %v\n", err)
-				} else {
-					searchOpts.DateFilter = dateFilter
-					fmt.Printf("[RAG Date Filter] Applied date filter: %v (expanded %d days backwards from %s)\n",
-						dateFilter, dateRangeWindow, *metadata.GeneratedDate)
-				}
+				// Use the dates directly from LLM - no expansion needed
+				searchOpts.DateFilter = metadata.Dates
 			} else {
 				fmt.Printf("[RAG Date Filter] No date filter - non-temporal query\n")
 			}

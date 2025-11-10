@@ -32,10 +32,11 @@ DOCUMENT-LEVEL METADATA:
 - Return as array: ["AMERICAS", "APAC"] or single: ["APAC"]
 - Use empty array [] if no specific regions mentioned
 
-**generated_date:** When was this report/document generated? (string in YYYY-MM-DD format)
-- Look for dates in headers, footers, titles, or metadata
-- This is when the report was created, not the data period it covers
-- Format: YYYY-MM-DD (e.g., "2025-10-15")
+**dates:** When were the relevant reports/documents generated? (array of dates in YYYY-MM-DD format)
+- Return a list of specific dates to search for reports generated on those dates
+- This is when the content were created, not the data period they cover
+- Format: ["YYYY-MM-DD", "YYYY-MM-DD", ...] (e.g., ["2025-10-15", "2025-10-16"])
+- **IMPORTANT: You decide which specific dates to include based on semantic understanding**
 
 **labels:** What general semantic labels describe this content? (array format)
 - Financial: revenue, margins, costs, budget
@@ -48,60 +49,33 @@ DOCUMENT-LEVEL METADATA:
 EXTRACTION GUIDELINES:
 - For business_units: Only include if specific business unit/platform/product mentioned
 - For labels: Only include if query clearly references these categories
-- For generated_date: **Return a date string ONLY when temporal filtering is needed, otherwise return null**
+- For dates: **Return a list of dates ONLY when temporal filtering is needed, otherwise return empty array []**
 
-**WHEN TO RETURN a date for generated_date:**
+**WHEN TO RETURN dates for dates:**
 ✓ Explicit time mentions: "yesterday", "last week", "Q3 2024", "October", "2025-10-15"
 ✓ Recency indicators: "recent", "latest", "current", "new", "updated"
 ✓ Status queries: "current status", "where are we now", "latest version"
 ✓ Trend/progression: "growth", "trending", "improving", "declining", "changes over time"
 ✓ Temporal comparisons: "compared to last", "since", "after", "before"
 
-**WHEN TO RETURN null for generated_date:**
+**WHEN TO RETURN empty array [] for dates:**
 ✗ Knowledge/definition queries: "what is", "how to", "explain", "definition of", "process for"
 ✗ Person/entity focused: "John's projects", "sales team updates", "what did [person] do"
 ✗ Comprehensive queries: "all", "complete history", "everything about"
 ✗ Policy/guideline queries: "guidelines", "policies", "rules", "procedures"
 ✗ No temporal context: "project details", "customer information", "product features"
 
-**Examples:**
-- "recent sales performance" → generated_date: "{today}"
-- "Q3 revenue" → generated_date: "2025-07-01" (calculated Q3 start)
-- "how has quality improved" → generated_date: "2025-07-01" (last 3-6 months)
-- "what is ROAS" → generated_date: null (knowledge query)
-- "explain NB pacing" → generated_date: null (definition query)
-- "what did the sales manager update" → generated_date: null (wants all updates)
-- "John's responsibilities" → generated_date: null (not time-specific)
-- "company policies on refunds" → generated_date: null (policy query)
+**DATE SELECTION EXAMPLES:**
+- "data as of Nov 10" → dates: ["2025-11-10"] (exact date)
+- "week of Nov 10" → dates: ["2025-11-10", "2025-11-11", "2025-11-12", "2025-11-13", "2025-11-14", "2025-11-15", "2025-11-16"] (all 7 days)
+- "reports for Nov 10th and 17th" → dates: ["2025-11-10", "2025-11-17"] (specific dates)
+- "Q3 monthly reports" → dates: ["2025-07-01", "2025-08-01", "2025-09-01"] (first of each month)
+- "yesterday" → dates: ["{calculate yesterday}"] (one day)
+- "last 3 days" → dates: ["{today}", "{today-1}", "{today-2}"] (three specific dates)
+- "what is ROAS" → dates: [] (knowledge query)
+- "explain NB pacing" → dates: [] (definition query)
+- "John's responsibilities" → dates: [] (not time-specific)
 
 Query: {query}
 
 Return JSON with "enhanced_query" and "metadata_filters" fields. Only include metadata fields that apply to the query.`
-
-// MetadataFieldDefinitions provides documentation for metadata fields
-const MetadataFieldDefinitions = `
-**business_units:** Which Liftoff business unit(s) are relevant? (array format)
-- "Demand": Helps advertisers acquire high-quality users through UA and retargeting
-- "Monetize": Helps app publishers maximize revenue through in-app advertising
-- "VX": Vungle Exchange - programmatic advertising platform (includes AoVX, AdColony)
-- "Other": Not specific to above units
-- Return as array: ["VX", "Demand"] or single: ["VX"]
-
-**regions:** Which geographic regions are covered? (array format)
-- "AMERICAS", "EMEA", "APAC"
-- Return as array: ["AMERICAS", "APAC"] or single: ["APAC"]
-- Use empty array [] if no specific regions mentioned
-
-**generated_date:** When was this report/document generated? (string in YYYY-MM-DD format)
-- Look for dates in headers, footers, titles, or metadata
-- This is when the report was created, not the data period it covers
-- Format: YYYY-MM-DD (e.g., "2025-10-15")
-
-**labels:** What general semantic labels describe this content? (array format)
-- Financial: revenue, margins, costs, budget
-- Performance: performance, conversion, volume
-- Time Periods: qtd, weekly, monthly, daily, forecast
-- Analysis Types: summary, trends, comparison, insights, breakdown
-- Return as array: ["revenue", "qtd", "summary"]
-- Be selective - don't over-label, only include clearly applicable labels
-`
