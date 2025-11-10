@@ -282,14 +282,30 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 // Uses sort.Slice for O(n log n) performance
 func sortResultsByDate(results []SearchResult, dateField string) {
 	if dateField == "" {
+		fmt.Printf("[Sort] Skipping sort - dateField is empty\n")
 		return // Skip sorting if no date field configured
+	}
+
+	fmt.Printf("[Sort] Sorting %d results by field '%s'\n", len(results), dateField)
+
+	// Log first 3 dates before sorting
+	for i := 0; i < len(results) && i < 3; i++ {
+		date := results[i].Metadata[dateField]
+		fmt.Printf("[Sort] Before[%d]: %s (source: %s)\n", i, date, results[i].FileName)
 	}
 
 	sort.Slice(results, func(i, j int) bool {
 		dateI := results[i].Metadata[dateField]
 		dateJ := results[j].Metadata[dateField]
-		return dateJ > dateI // Descending order (newest first)
+		return dateI > dateJ // Descending order (newest first)
 	})
+
+	// Log first 3 dates after sorting
+	fmt.Printf("[Sort] After sorting:\n")
+	for i := 0; i < len(results) && i < 3; i++ {
+		date := results[i].Metadata[dateField]
+		fmt.Printf("[Sort] After[%d]: %s (source: %s)\n", i, date, results[i].FileName)
+	}
 }
 
 // handleRAGIngest processes document ingestion requests
