@@ -4,6 +4,7 @@ package rag
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -278,21 +279,17 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 
 // sortResultsByDate sorts results by the configured date field in descending order (newest first)
 // If dateField is empty, no sorting is performed
+// Uses sort.Slice for O(n log n) performance
 func sortResultsByDate(results []SearchResult, dateField string) {
 	if dateField == "" {
 		return // Skip sorting if no date field configured
 	}
 
-	// Simple bubble sort - adequate for small result sets
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			dateI := results[i].Metadata[dateField]
-			dateJ := results[j].Metadata[dateField]
-			if dateJ > dateI { // Descending order
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
+	sort.Slice(results, func(i, j int) bool {
+		dateI := results[i].Metadata[dateField]
+		dateJ := results[j].Metadata[dateField]
+		return dateJ > dateI // Descending order (newest first)
+	})
 }
 
 // handleRAGIngest processes document ingestion requests
