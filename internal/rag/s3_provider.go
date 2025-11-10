@@ -3,6 +3,7 @@ package rag
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
@@ -19,6 +20,8 @@ type S3Provider struct {
 	config          map[string]interface{}
 	s3vectorsClient *s3vectors.Client
 	logger          *logging.Logger
+	initOnce        sync.Once // Ensures initialization happens exactly once
+	initErr         error     // Stores initialization error
 }
 
 // NewS3Provider creates a new S3-based vector provider
@@ -51,22 +54,17 @@ func NewS3Provider(config map[string]interface{}) (VectorProvider, error) {
 }
 
 // Initialize sets up the S3 vector provider
+// Thread-safe: Uses sync.Once to ensure initialization happens exactly once
 func (s *S3Provider) Initialize(ctx context.Context) error {
-	if s.s3vectorsClient != nil {
-		return nil
-	}
-
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(s.region))
-	if err != nil {
-		return fmt.Errorf("failed to load AWS config: %w", err)
-	}
-
-	if s.s3vectorsClient == nil {
+	s.initOnce.Do(func() {
+		cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(s.region))
+		if err != nil {
+			s.initErr = fmt.Errorf("failed to load AWS config: %w", err)
+			return
+		}
 		s.s3vectorsClient = s3vectors.NewFromConfig(cfg)
-	}
-
-	// TODO: Verify bucket access and set up vector store
-	return nil
+	})
+	return s.initErr
 }
 
 // IngestFile ingests a single file into the vector store
