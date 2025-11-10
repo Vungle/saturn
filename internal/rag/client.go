@@ -121,13 +121,24 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 			// Extract date filter if present
 			if metadata.GeneratedDate != nil {
 				fmt.Printf("[RAG Date Filter] Detected temporal query, base date: %s\n", *metadata.GeneratedDate)
-				dateFilter, err := ExpandDateRange(*metadata.GeneratedDate, 7)
+
+				// Get date range window from config, default to 7 if date filtering is active
+				dateRangeWindow := 7
+				if c.config != nil {
+					if window, ok := c.config["date_range_window_days"].(int); ok && window > 0 {
+						dateRangeWindow = window
+					} else if windowFloat, ok := c.config["date_range_window_days"].(float64); ok && windowFloat > 0 {
+						dateRangeWindow = int(windowFloat)
+					}
+				}
+
+				dateFilter, err := ExpandDateRange(*metadata.GeneratedDate, dateRangeWindow)
 				if err != nil {
 					fmt.Printf("[RAG Date Filter] ERROR: Date range expansion failed: %v\n", err)
 				} else {
 					searchOpts.DateFilter = dateFilter
-					fmt.Printf("[RAG Date Filter] Applied date filter: %v (expanded 7 days backwards from %s)\n",
-						dateFilter, *metadata.GeneratedDate)
+					fmt.Printf("[RAG Date Filter] Applied date filter: %v (expanded %d days backwards from %s)\n",
+						dateFilter, dateRangeWindow, *metadata.GeneratedDate)
 				}
 			} else {
 				fmt.Printf("[RAG Date Filter] No date filter - non-temporal query\n")
@@ -234,8 +245,16 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		return "No relevant context found for query: '" + query + "'", nil
 	}
 
+	// Get date filter field for sorting and display (if configured)
+	dateFilterField := ""
+	if c.config != nil {
+		if field, ok := c.config["date_filter_field"].(string); ok && field != "" {
+			dateFilterField = field
+		}
+	}
+
 	// TODO: Add reranking step here in the future
-	sortResultsByDate(results)
+	sortResultsByDate(results, dateFilterField)
 
 	// Build response string
 	var response strings.Builder
@@ -253,9 +272,11 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 			response.WriteString("\n")
 		}
 
-		// Add metadata if available
-		if date, exists := result.Metadata["report_generated_date"]; exists {
-			response.WriteString(fmt.Sprintf("Date: %s\n", date))
+		// Add metadata if available (use configured date field)
+		if dateFilterField != "" {
+			if date, exists := result.Metadata[dateFilterField]; exists {
+				response.WriteString(fmt.Sprintf("Date: %s\n", date))
+			}
 		}
 
 		// Add content
@@ -270,13 +291,18 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 	return response.String(), nil
 }
 
-// sortResultsByDate sorts results by report_generated_date in descending order (newest first)
-func sortResultsByDate(results []SearchResult) {
+// sortResultsByDate sorts results by the configured date field in descending order (newest first)
+// If dateField is empty, no sorting is performed
+func sortResultsByDate(results []SearchResult, dateField string) {
+	if dateField == "" {
+		return // Skip sorting if no date field configured
+	}
+
 	// Simple bubble sort - adequate for small result sets
 	for i := 0; i < len(results); i++ {
 		for j := i + 1; j < len(results); j++ {
-			dateI := results[i].Metadata["report_generated_date"]
-			dateJ := results[j].Metadata["report_generated_date"]
+			dateI := results[i].Metadata[dateField]
+			dateJ := results[j].Metadata[dateField]
 			if dateJ > dateI { // Descending order
 				results[i], results[j] = results[j], results[i]
 			}

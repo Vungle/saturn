@@ -159,6 +159,16 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 			ragConfig["chunk_size"] = cfg.RAG.ChunkSize
 		}
 
+		// Set date filter configuration (applies to all providers)
+		if providerSettings, exists := cfg.RAG.Providers[cfg.RAG.Provider]; exists {
+			if providerSettings.DateFilterField != "" {
+				ragConfig["date_filter_field"] = providerSettings.DateFilterField
+			}
+			if providerSettings.DateRangeWindowDays > 0 {
+				ragConfig["date_range_window_days"] = providerSettings.DateRangeWindowDays
+			}
+		}
+
 		ragClient, err := rag.NewClientWithProvider(cfg.RAG.Provider, ragConfig)
 		if err != nil {
 			clientLogger.ErrorKV("Failed to create RAG client", "error", err)

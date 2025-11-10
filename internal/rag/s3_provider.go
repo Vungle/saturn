@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors"
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors/document"
 	"github.com/aws/aws-sdk-go-v2/service/s3vectors/types"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
 // S3Provider implements VectorProvider using AWS S3 as storage backend
@@ -17,6 +18,7 @@ type S3Provider struct {
 	region          string
 	config          map[string]interface{}
 	s3vectorsClient *s3vectors.Client
+	logger          *logging.Logger
 }
 
 // NewS3Provider creates a new S3-based vector provider
@@ -36,11 +38,15 @@ func NewS3Provider(config map[string]interface{}) (VectorProvider, error) {
 		region = "us-east-1" // default region
 	}
 
+	// Create logger for S3 provider
+	logger := logging.New("s3-provider", logging.LevelInfo)
+
 	return &S3Provider{
 		bucketName: bucketName,
 		indexName:  indexName,
 		region:     region,
 		config:     config,
+		logger:     logger,
 	}, nil
 }
 
@@ -118,11 +124,15 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 	if len(options.DateFilter) > 0 || len(options.Metadata) > 0 {
 		filter := make(map[string]interface{})
 
-		// Add date filter if provided
-		if len(options.DateFilter) > 0 {
-			// todo make date filter configurable
-			filter["report_generated_date"] = map[string]interface{}{
-				"$in": options.DateFilter,
+		// Add date filter ONLY if date_filter_field is configured
+		if len(options.DateFilter) > 0 && s.config != nil {
+			if dateFilterField, ok := s.config["date_filter_field"].(string); ok && dateFilterField != "" {
+				filter[dateFilterField] = map[string]interface{}{
+					"$in": options.DateFilter,
+				}
+			} else {
+				// If date_filter_field is not configured, skip date filtering entirely
+				s.logger.InfoKV("Date filter not applied: date_filter_field not configured", "provided_dates", options.DateFilter)
 			}
 		}
 
@@ -181,11 +191,17 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 					searchResult.Metadata[key] = fmt.Sprintf("%v", value)
 				}
 
-				// Log doc_id and report_generated_date
+				// Log doc_id and date field (if configured)
 				vectorKey := *vector.Key
-				reportDate := searchResult.Metadata["report_generated_date"]
-				fmt.Printf("[S3 Vector] vector key: %s, report_generated_date: %s, score: %.4f\n",
-					vectorKey, reportDate, score)
+				if dateField, ok := s.config["date_filter_field"].(string); ok && dateField != "" {
+					if reportDate, exists := searchResult.Metadata[dateField]; exists {
+						s.logger.DebugKV("S3 vector result", "vector_key", vectorKey, "date_field", dateField, "date_value", reportDate, "score", score)
+					} else {
+						s.logger.DebugKV("S3 vector result", "vector_key", vectorKey, "score", score)
+					}
+				} else {
+					s.logger.DebugKV("S3 vector result", "vector_key", vectorKey, "score", score)
+				}
 			}
 		}
 

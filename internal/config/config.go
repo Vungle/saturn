@@ -134,6 +134,8 @@ type RAGProviderConfig struct {
 	VectorStoreMetadataValue string  `json:"vectorStoreMetadataValue,omitempty"` // OpenAI provider: vector store metadata value
 	BucketName               string  `json:"bucketName,omitempty"`               // S3 provider: S3 bucket name
 	Region                   string  `json:"region,omitempty"`                   // S3 provider: AWS region
+	DateFilterField          string  `json:"dateFilterField,omitempty"`          // Date filter metadata field name
+	DateRangeWindowDays      int     `json:"dateRangeWindowDays,omitempty"`      // Days to expand date range backward (default: 7)
 }
 
 // RAGEmbeddingProviderConfig contains embedding provider-specific settings

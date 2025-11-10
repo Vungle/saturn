@@ -51,7 +51,7 @@ type SearchOptions struct {
 	Limit       int               // Maximum number of results
 	MinScore    float32           // Minimum relevance score
 	Metadata    map[string]string // Filter by metadata
-	DateFilter  []string          // Date range filter for report_generated_date (YYYY-MM-DD format)
+	DateFilter  []string          // Date range filter (YYYY-MM-DD format)
 	QueryVector []float32         // Pre-computed query embedding vector
 }
 
