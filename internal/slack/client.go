@@ -27,17 +27,18 @@ import (
 
 // Client represents the Slack client application.
 type Client struct {
-	logger          *logging.Logger // Structured logger
-	userFrontend    UserFrontend
-	mcpClients      map[string]*mcp.Client
-	llmMCPBridge    *handlers.LLMMCPBridge
-	llmRegistry     *llm.ProviderRegistry // LLM provider registry
-	cfg             *config.Config        // Holds the application configuration
-	messageHistory  map[string][]Message
-	historyLimit    int
-	discoveredTools map[string]mcp.ToolInfo
-	tracingHandler  observability.TracingHandler
-	queryEnhancer   *rag.QueryEnhancer // Query enhancer for all queries (not just RAG)
+	logger                 *logging.Logger // Structured logger
+	userFrontend           UserFrontend
+	mcpClients             map[string]*mcp.Client
+	llmMCPBridge           *handlers.LLMMCPBridge
+	llmRegistry            *llm.ProviderRegistry // LLM provider registry
+	cfg                    *config.Config        // Holds the application configuration
+	messageHistory         map[string][]Message
+	historyLimit           int
+	discoveredTools        map[string]mcp.ToolInfo
+	tracingHandler         observability.TracingHandler
+	queryEnhancer          *rag.QueryEnhancer // Query enhancer for all queries (not just RAG)
+	queryEnhancementPrompt string             // Query enhancement prompt template loaded from file
 }
 
 // Message represents a message in the conversation history
@@ -193,8 +194,31 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 
 	// Initialize query enhancer for ALL queries (not just RAG)
 	var queryEnhancer *rag.QueryEnhancer
+	var queryEnhancementPrompt string
 
 	if cfg.QueryEnhancementProvider != "" {
+		// Validate: If queryEnhancementProvider is set, queryEnhancementPromptFile is required
+		if cfg.QueryEnhancementPromptFile == "" {
+			clientLogger.ErrorKV("queryEnhancementProvider is configured but queryEnhancementPromptFile is missing",
+				"provider", cfg.QueryEnhancementProvider)
+			return nil, customErrors.WrapConfigError(
+				fmt.Errorf("queryEnhancementPromptFile is required when queryEnhancementProvider is configured"),
+				"query_enhancement_config_invalid",
+				"queryEnhancementPromptFile must be set when queryEnhancementProvider is configured")
+		}
+
+		// Load query enhancement prompt from file
+		content, err := os.ReadFile(cfg.QueryEnhancementPromptFile)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to read query enhancement prompt file",
+				"file", cfg.QueryEnhancementPromptFile, "error", err)
+			return nil, customErrors.WrapConfigError(err, "query_enhancement_prompt_file_read_failed",
+				"Failed to read query enhancement prompt file")
+		}
+		queryEnhancementPrompt = string(content)
+		clientLogger.InfoKV("Loaded query enhancement prompt from file",
+			"file", cfg.QueryEnhancementPromptFile, "length", len(queryEnhancementPrompt))
+
 		// Create a separate LLM registry for query enhancement
 		clientLogger.InfoKV("Creating dedicated LLM registry for query enhancement", "provider", cfg.QueryEnhancementProvider)
 
@@ -210,10 +234,11 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		qeRegistry, err := llm.NewProviderRegistry(queryEnhancerConfig, queryEnhancerLogger)
 		if err != nil {
 			clientLogger.ErrorKV("Failed to create query enhancement LLM registry", "error", err)
-		} else {
-			queryEnhancer = rag.NewQueryEnhancer(qeRegistry)
-			clientLogger.InfoKV("Created query enhancer for all queries", "provider", cfg.QueryEnhancementProvider)
+			return nil, customErrors.WrapLLMError(err, "query_enhancement_llm_registry_failed",
+				"Failed to create LLM registry for query enhancement")
 		}
+		queryEnhancer = rag.NewQueryEnhancer(qeRegistry)
+		clientLogger.InfoKV("Created query enhancer for all queries", "provider", cfg.QueryEnhancementProvider)
 	}
 
 	// Wire up RAG embedding provider
@@ -275,17 +300,18 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 
 	// --- Create and return Client instance ---
 	return &Client{
-		logger:          clientLogger,
-		userFrontend:    userFrontend,
-		mcpClients:      mcpClients,
-		llmMCPBridge:    llmMCPBridge,
-		llmRegistry:     registry,
-		cfg:             cfg,
-		messageHistory:  make(map[string][]Message),
-		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
-		discoveredTools: discoveredTools,
-		tracingHandler:  tracingHandler,
-		queryEnhancer:   queryEnhancer, // Query enhancer for all queries
+		logger:                 clientLogger,
+		userFrontend:           userFrontend,
+		mcpClients:             mcpClients,
+		llmMCPBridge:           llmMCPBridge,
+		llmRegistry:            registry,
+		cfg:                    cfg,
+		messageHistory:         make(map[string][]Message),
+		historyLimit:           cfg.Slack.MessageHistory, // Store configured number of messages per channel
+		discoveredTools:        discoveredTools,
+		tracingHandler:         tracingHandler,
+		queryEnhancer:          queryEnhancer,          // Query enhancer for all queries
+		queryEnhancementPrompt: queryEnhancementPrompt, // Query enhancement prompt template
 	}, nil
 }
 
@@ -521,7 +547,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 			})
 
 		startTime := time.Now()
-		enhanced, err := c.queryEnhancer.EnhanceQuery(qeCtx, userPrompt, today)
+		enhanced, err := c.queryEnhancer.EnhanceQuery(qeCtx, userPrompt, today, c.queryEnhancementPrompt)
 		duration := time.Since(startTime)
 
 		c.tracingHandler.SetDuration(qeSpan, duration)

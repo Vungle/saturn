@@ -37,9 +37,9 @@ func NewQueryEnhancer(llmRegistry *llm.ProviderRegistry) *QueryEnhancer {
 }
 
 // EnhanceQuery enhances a query by extracting metadata filters and improving the query text
-func (qe *QueryEnhancer) EnhanceQuery(ctx context.Context, query string, today string) (*EnhancedQuery, error) {
+func (qe *QueryEnhancer) EnhanceQuery(ctx context.Context, query string, today string, promptTemplate string) (*EnhancedQuery, error) {
 	// Build the prompt by replacing placeholders
-	prompt := strings.ReplaceAll(QueryEnhancementPromptTemplate, "{today}", today)
+	prompt := strings.ReplaceAll(promptTemplate, "{today}", today)
 	prompt = strings.ReplaceAll(prompt, "{query}", query)
 
 	// Get the primary LLM provider from registry
