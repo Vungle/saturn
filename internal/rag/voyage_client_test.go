@@ -41,7 +41,7 @@ func TestVoyageClient_EmbedQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			embedding, err := client.EmbedQuery(ctx, tt.query)
+			result, err := client.EmbedQuery(ctx, tt.query)
 
 			if tt.wantErr {
 				if err == nil {
@@ -56,11 +56,12 @@ func TestVoyageClient_EmbedQuery(t *testing.T) {
 			}
 
 			// Verify embedding dimensions (voyage-context-3 should return 1024 dimensions)
-			if len(embedding) == 0 {
+			if len(result.Embedding) == 0 {
 				t.Errorf("EmbedQuery() returned empty embedding")
 			}
 
-			t.Logf("Successfully generated embedding with %d dimensions", len(embedding))
+			t.Logf("Successfully generated embedding with %d dimensions (model: %s, tokens: %d)",
+				len(result.Embedding), result.Model, result.TokensUsed)
 		})
 	}
 }

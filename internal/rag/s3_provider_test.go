@@ -118,11 +118,11 @@ func TestS3Provider_Search_WithFilters(t *testing.T) {
 	ctx := context.Background()
 
 	// Generate query embedding using Voyage
-	queryVector, err := voyageClient.EmbedQuery(ctx, "revenue performance metrics")
+	embeddingResult, err := voyageClient.EmbedQuery(ctx, "revenue performance metrics")
 	if err != nil {
 		t.Fatalf("Failed to generate query embedding: %v", err)
 	}
-	t.Logf("Generated query embedding with %d dimensions", len(queryVector))
+	t.Logf("Generated query embedding with %d dimensions", len(embeddingResult.Embedding))
 
 	config := map[string]interface{}{
 		"bucket_name": bucketName,
@@ -145,7 +145,7 @@ func TestS3Provider_Search_WithFilters(t *testing.T) {
 		dateFilter := []string{"2025-10-31", "2025-10-30", "2025-10-29"}
 
 		results, err := provider.Search(ctx, "revenue performance metrics", SearchOptions{
-			QueryVector: queryVector,
+			QueryVector: embeddingResult.Embedding,
 			DateFilter:  dateFilter,
 			Limit:       5,
 		})
@@ -165,7 +165,7 @@ func TestS3Provider_Search_WithFilters(t *testing.T) {
 	// Test with metadata filter
 	t.Run("search with metadata filter", func(t *testing.T) {
 		results, err := provider.Search(ctx, "revenue performance metrics", SearchOptions{
-			QueryVector: queryVector,
+			QueryVector: embeddingResult.Embedding,
 			Metadata: map[string]string{
 				"business_units": "VX",
 			},
@@ -180,9 +180,9 @@ func TestS3Provider_Search_WithFilters(t *testing.T) {
 	})
 
 	// Test with no filter
-	t.Run("search with metadata filter", func(t *testing.T) {
+	t.Run("search with no filter", func(t *testing.T) {
 		results, err := provider.Search(ctx, "revenue performance metrics", SearchOptions{
-			QueryVector: queryVector,
+			QueryVector: embeddingResult.Embedding,
 			Limit:       5,
 		})
 
