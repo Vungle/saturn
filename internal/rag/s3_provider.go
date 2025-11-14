@@ -128,6 +128,7 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 				filter[dateFilterField] = map[string]interface{}{
 					"$in": options.DateFilter,
 				}
+				s.logger.DebugKV("Applying date filter", "field", dateFilterField, "dates", options.DateFilter)
 			} else {
 				// If date_filter_field is not configured, skip date filtering entirely
 				s.logger.InfoKV("Date filter not applied: date_filter_field not configured", "provided_dates", options.DateFilter)
@@ -213,20 +214,6 @@ func (s *S3Provider) Search(ctx context.Context, query string, options SearchOpt
 		// Apply minimum score filter
 		if options.MinScore > 0 && searchResult.Score < options.MinScore {
 			continue
-		}
-
-		// Apply metadata filters
-		if len(options.Metadata) > 0 {
-			match := true
-			for key, value := range options.Metadata {
-				if searchResult.Metadata[key] != value {
-					match = false
-					break
-				}
-			}
-			if !match {
-				continue
-			}
 		}
 
 		results = append(results, searchResult)
