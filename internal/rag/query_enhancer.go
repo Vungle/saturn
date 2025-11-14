@@ -13,7 +13,7 @@ import (
 type MetadataFilters struct {
 	BusinessUnits []string `json:"business_units,omitempty"`
 	Regions       []string `json:"regions,omitempty"`
-	Dates         []string `json:"dates,omitempty"` // List of dates for temporal queries (YYYY-MM-DD format)
+	Dates         []int    `json:"dates,omitempty"` // List of dates for temporal queries (YYYYMMDD integer format)
 	Labels        []string `json:"labels,omitempty"`
 }
 
