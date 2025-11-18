@@ -142,7 +142,7 @@ func TestS3Provider_Search_WithFilters(t *testing.T) {
 
 	// Test with date filter
 	t.Run("search with date filter", func(t *testing.T) {
-		dateFilter := []string{"2025-10-31", "2025-10-30", "2025-10-29"}
+		dateFilter := []int{20251031, 20251030, 20251029}
 
 		results, err := provider.Search(ctx, "revenue performance metrics", SearchOptions{
 			QueryVector: embeddingResult.Embedding,
