@@ -27,16 +27,18 @@ import (
 
 // Client represents the Slack client application.
 type Client struct {
-	logger          *logging.Logger // Structured logger
-	userFrontend    UserFrontend
-	mcpClients      map[string]*mcp.Client
-	llmMCPBridge    *handlers.LLMMCPBridge
-	llmRegistry     *llm.ProviderRegistry // LLM provider registry
-	cfg             *config.Config        // Holds the application configuration
-	messageHistory  map[string][]Message
-	historyLimit    int
-	discoveredTools map[string]mcp.ToolInfo
-	tracingHandler  observability.TracingHandler
+	logger                 *logging.Logger // Structured logger
+	userFrontend           UserFrontend
+	mcpClients             map[string]*mcp.Client
+	llmMCPBridge           *handlers.LLMMCPBridge
+	llmRegistry            *llm.ProviderRegistry // LLM provider registry
+	cfg                    *config.Config        // Holds the application configuration
+	messageHistory         map[string][]Message
+	historyLimit           int
+	discoveredTools        map[string]mcp.ToolInfo
+	tracingHandler         observability.TracingHandler
+	queryEnhancer          *rag.QueryEnhancer // Query enhancer for all queries (not just RAG)
+	queryEnhancementPrompt string             // Query enhancement prompt template loaded from file
 }
 
 // Message represents a message in the conversation history
@@ -134,12 +136,38 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 				if openaiConfig, exists := cfg.LLM.Providers["openai"]; exists && openaiConfig.APIKey != "" {
 					ragConfig["api_key"] = openaiConfig.APIKey
 				}
+			case "s3":
+				if providerSettings.BucketName != "" {
+					ragConfig["bucket_name"] = providerSettings.BucketName
+				}
+				if providerSettings.IndexName != "" {
+					ragConfig["index_name"] = providerSettings.IndexName
+				}
+				if providerSettings.Region != "" {
+					ragConfig["region"] = providerSettings.Region
+				}
+				if providerSettings.MaxResults > 0 {
+					ragConfig["max_results"] = providerSettings.MaxResults
+				}
+				if providerSettings.ScoreThreshold > 0 {
+					ragConfig["score_threshold"] = providerSettings.ScoreThreshold
+				}
 			}
 		}
 
 		// Set chunk size
 		if cfg.RAG.ChunkSize > 0 {
 			ragConfig["chunk_size"] = cfg.RAG.ChunkSize
+		}
+
+		// Set date filter configuration (applies to all providers)
+		if providerSettings, exists := cfg.RAG.Providers[cfg.RAG.Provider]; exists {
+			if providerSettings.DateFilterField != "" {
+				ragConfig["date_filter_field"] = providerSettings.DateFilterField
+			}
+			if providerSettings.DateRangeWindowDays > 0 {
+				ragConfig["date_range_window_days"] = providerSettings.DateRangeWindowDays
+			}
 		}
 
 		ragClient, err := rag.NewClientWithProvider(cfg.RAG.Provider, ragConfig)
@@ -163,6 +191,81 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		return nil, customErrors.WrapLLMError(err, "llm_registry_init_failed", "Failed to initialize LLM provider registry")
 	}
 	clientLogger.Info("LLM provider registry initialized successfully")
+
+	// Initialize query enhancer for ALL queries (not just RAG)
+	var queryEnhancer *rag.QueryEnhancer
+	var queryEnhancementPrompt string
+
+	if cfg.QueryEnhancementProvider != "" {
+		// Validate: If queryEnhancementProvider is set, queryEnhancementPromptFile is required
+		if cfg.QueryEnhancementPromptFile == "" {
+			clientLogger.ErrorKV("queryEnhancementProvider is configured but queryEnhancementPromptFile is missing",
+				"provider", cfg.QueryEnhancementProvider)
+			return nil, customErrors.WrapConfigError(
+				fmt.Errorf("queryEnhancementPromptFile is required when queryEnhancementProvider is configured"),
+				"query_enhancement_config_invalid",
+				"queryEnhancementPromptFile must be set when queryEnhancementProvider is configured")
+		}
+
+		// Load query enhancement prompt from file
+		content, err := os.ReadFile(cfg.QueryEnhancementPromptFile)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to read query enhancement prompt file",
+				"file", cfg.QueryEnhancementPromptFile, "error", err)
+			return nil, customErrors.WrapConfigError(err, "query_enhancement_prompt_file_read_failed",
+				"Failed to read query enhancement prompt file")
+		}
+		queryEnhancementPrompt = string(content)
+		clientLogger.InfoKV("Loaded query enhancement prompt from file",
+			"file", cfg.QueryEnhancementPromptFile, "length", len(queryEnhancementPrompt))
+
+		// Create a separate LLM registry for query enhancement
+		clientLogger.InfoKV("Creating dedicated LLM registry for query enhancement", "provider", cfg.QueryEnhancementProvider)
+
+		// Create a minimal config with only the specified provider
+		queryEnhancerConfig := &config.Config{
+			LLM: config.LLMConfig{
+				Provider:  cfg.QueryEnhancementProvider,
+				Providers: cfg.LLM.Providers, // Reuse all provider configs
+			},
+		}
+
+		queryEnhancerLogger := logging.New("query-enhancer", logLevel)
+		qeRegistry, err := llm.NewProviderRegistry(queryEnhancerConfig, queryEnhancerLogger)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to create query enhancement LLM registry", "error", err)
+			return nil, customErrors.WrapLLMError(err, "query_enhancement_llm_registry_failed",
+				"Failed to create LLM registry for query enhancement")
+		}
+		queryEnhancer = rag.NewQueryEnhancer(qeRegistry)
+		clientLogger.InfoKV("Created query enhancer for all queries", "provider", cfg.QueryEnhancementProvider)
+	}
+
+	// Wire up RAG embedding provider
+	// Note: Query enhancement is now done in Slack client before LLM call
+	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
+		// Create embedding provider if configured
+		if cfg.RAG.EmbeddingProvider != "" {
+			// Get embedding provider config
+			var embeddingConfig rag.EmbeddingProviderConfig
+			if providerCfg, exists := cfg.RAG.EmbeddingProviders[cfg.RAG.EmbeddingProvider]; exists {
+				embeddingConfig = rag.EmbeddingProviderConfig{
+					APIKey: providerCfg.APIKey,
+				}
+			} else {
+				clientLogger.WarnKV("Embedding provider config not found in RAG.EmbeddingProviders",
+					"provider", cfg.RAG.EmbeddingProvider)
+			}
+
+			provider, err := rag.CreateEmbeddingProvider(cfg.RAG.EmbeddingProvider, embeddingConfig)
+			if err != nil {
+				clientLogger.ErrorKV("Failed to create embedding provider, continuing without embeddings", "provider", cfg.RAG.EmbeddingProvider, "error", err)
+			} else {
+				ragClient.SetEmbeddingProvider(provider)
+				clientLogger.InfoKV("Enabled RAG embeddings", "provider", cfg.RAG.EmbeddingProvider)
+			}
+		}
+	}
 
 	// Load custom prompt from file if specified and customPrompt is empty
 	if cfg.LLM.CustomPromptFile != "" && cfg.LLM.CustomPrompt == "" {
@@ -189,18 +292,26 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	// Initialize observability
 	tracingHandler := observability.NewTracingHandler(cfg, clientLogger)
 
+	// Wire up tracing handler to RAG client for embedding span tracking
+	if ragClient, ok := rawClientMap["rag"].(*rag.Client); ok {
+		ragClient.SetTracingHandler(tracingHandler)
+		clientLogger.DebugKV("Set tracing handler on RAG client", "client", "rag")
+	}
+
 	// --- Create and return Client instance ---
 	return &Client{
-		logger:          clientLogger,
-		userFrontend:    userFrontend,
-		mcpClients:      mcpClients,
-		llmMCPBridge:    llmMCPBridge,
-		llmRegistry:     registry,
-		cfg:             cfg,
-		messageHistory:  make(map[string][]Message),
-		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
-		discoveredTools: discoveredTools,
-		tracingHandler:  tracingHandler,
+		logger:                 clientLogger,
+		userFrontend:           userFrontend,
+		mcpClients:             mcpClients,
+		llmMCPBridge:           llmMCPBridge,
+		llmRegistry:            registry,
+		cfg:                    cfg,
+		messageHistory:         make(map[string][]Message),
+		historyLimit:           cfg.Slack.MessageHistory, // Store configured number of messages per channel
+		discoveredTools:        discoveredTools,
+		tracingHandler:         tracingHandler,
+		queryEnhancer:          queryEnhancer,          // Query enhancer for all queries
+		queryEnhancementPrompt: queryEnhancementPrompt, // Query enhancement prompt template
 	}, nil
 }
 
@@ -418,16 +529,73 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
 
+	var enhancedQuery string
+	var queryMetadata *rag.MetadataFilters
+
+	if c.queryEnhancer != nil {
+		today := time.Now().Format("2006-01-02") // Format as YYYY-MM-DD
+		fmt.Printf("[Query Enhancement] INPUT: '%s'\n", userPrompt)
+		fmt.Printf("[Query Enhancement] Today's date: %s\n", today)
+
+		// Start query enhancement span
+		qeCtx, qeSpan := c.tracingHandler.StartLLMSpan(ctx, "query-enhancement",
+			c.cfg.LLM.Providers[c.cfg.QueryEnhancementProvider].Model,
+			userPrompt,
+			map[string]interface{}{
+				"today":            today,
+				"enhancement_type": "temporal_detection",
+			})
+
+		startTime := time.Now()
+		enhanced, err := c.queryEnhancer.EnhanceQuery(qeCtx, userPrompt, today, c.queryEnhancementPrompt)
+		duration := time.Since(startTime)
+
+		c.tracingHandler.SetDuration(qeSpan, duration)
+
+		if err != nil {
+			fmt.Printf("[Query Enhancement] ERROR: %v, using original query\n", err)
+			c.logger.WarnKV("Query enhancement failed, using original query", "error", err)
+			c.tracingHandler.RecordError(qeSpan, err, "ERROR")
+			enhancedQuery = userPrompt
+		} else {
+			enhancedQuery = enhanced.EnhancedQuery
+			queryMetadata = &enhanced.MetadataFilters
+
+			fmt.Printf("[Query Enhancement] OUTPUT: '%s'\n", enhancedQuery)
+			if queryMetadata != nil && len(queryMetadata.Dates) > 0 {
+				fmt.Printf("[Query Enhancement] Detected temporal query with %d dates: %v\n", len(queryMetadata.Dates), queryMetadata.Dates)
+			} else {
+				fmt.Printf("[Query Enhancement] Non-temporal query (no date metadata)\n")
+			}
+
+			// Set output and metadata for tracing
+			c.tracingHandler.SetOutput(qeSpan, enhancedQuery)
+			if queryMetadata != nil && len(queryMetadata.Dates) > 0 {
+				c.tracingHandler.RecordSuccess(qeSpan, fmt.Sprintf("Temporal query detected: %d dates", len(queryMetadata.Dates)))
+			} else {
+				c.tracingHandler.RecordSuccess(qeSpan, "Non-temporal query")
+			}
+
+			c.logger.DebugKV("Query enhanced successfully", "enhanced", enhancedQuery, "has_metadata", queryMetadata != nil)
+		}
+		qeSpan.End()
+	} else {
+		fmt.Printf("[Query Enhancement] DISABLED: Using original query\n")
+		// No query enhancer configured, use original query
+		enhancedQuery = userPrompt
+	}
+
 	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
+		// Use ENHANCED query instead of original userPrompt
 		var finalPrompt string
 		customPrompt := c.cfg.LLM.CustomPrompt
 		if customPrompt != "" {
-			// Use custom prompt as system instruction, then add user prompt
-			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, userPrompt)
+			// Use custom prompt as system instruction, then add enhanced query
+			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, enhancedQuery)
 			c.logger.DebugKV("Using custom prompt as system instruction", "custom_prompt_length", len(customPrompt))
 		} else {
-			finalPrompt = userPrompt
+			finalPrompt = enhancedQuery
 		}
 
 		llmCtx, llmSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-call", c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model, finalPrompt, map[string]interface{}{
@@ -473,7 +641,9 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 		llmSpan.End()
 
 		// Process the LLM response through the MCP pipeline
-		c.processLLMResponseAndReply(llmCtx, llmResponse, userPrompt, channelID, threadTS)
+		// Pass enhancedQuery instead of userPrompt so re-prompt uses enhanced query
+		// Pass queryMetadata so it can be forwarded to RAG search
+		c.processLLMResponseAndReply(llmCtx, llmResponse, enhancedQuery, queryMetadata, channelID, threadTS)
 	} else {
 		// Agent path with enhanced tracing
 		agentCtx, agentSpan := c.tracingHandler.StartSpan(ctx, "llm-agent-call", "generation", userPrompt, map[string]string{
@@ -616,7 +786,7 @@ func (c *Client) estimateToolTokenUsage(toolName, prompt, response string) int {
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 // Incorporates logic previously in LLMClient.ProcessToolResponse.
-func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
+func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmResponse *llms.ContentChoice, userPrompt string, queryMetadata *rag.MetadataFilters, channelID, threadTS string) {
 	// Start tool processing span
 	ctx, span := c.tracingHandler.StartSpan(traceCtx, "tool-processing", "span", userPrompt, map[string]string{
 		"channel_id":      channelID,
@@ -631,11 +801,13 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		"channel_id": channelID,
 		"thread_ts":  threadTS,
 	}
-	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
-	// Create a context with timeout for tool processing
-	toolCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
-	defer cancel()
+	if queryMetadata != nil {
+		extraArgs["query_metadata"] = queryMetadata
+		c.logger.DebugKV("Added query metadata to extra arguments", "date_count", len(queryMetadata.Dates))
+	}
+
+	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
 	// --- Process Tool Response (Logic from LLMClient.ProcessToolResponse) ---
 	var finalResponse string
@@ -649,41 +821,56 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		toolProcessingErr = nil
 		c.logger.Warn("LLMMCPBridge is nil, skipping tool processing")
 	} else {
-		// Extract tool name before execution
-		executedToolName := c.extractToolNameFromResponse(llmResponse.Content)
-
-		// Start tool execution span
-		_, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "event", "", map[string]string{
-			"bridge_available": "true",
-			"response_type":    "processing",
-			"tool_name":        executedToolName,
-		})
-		startTime := time.Now()
-		// Process the response through the bridge
-		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(toolCtx, llmResponse, userPrompt, extraArgs)
-		toolDuration := time.Since(startTime)
-		c.tracingHandler.SetDuration(toolExecSpan, toolDuration)
+		// Extract tool call from LLM response using bridge's logic (single source of truth)
+		toolCall, err := c.llmMCPBridge.ExtractToolCall(llmResponse)
 		if err != nil {
-			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+			finalResponse = fmt.Sprintf("Sorry, I encountered an error extracting tool call: %v", err)
 			isToolResult = false
-			toolProcessingErr = err // Store the error
-			c.tracingHandler.RecordError(toolExecSpan, err, "ERROR")
-		} else {
-			// If the processed response is different from the original, a tool was executed
-			if processedResponse != llmResponse.Content {
+			toolProcessingErr = err
+			c.logger.ErrorKV("Failed to extract tool call", "error", err)
+		} else if toolCall != nil {
+			// Tool call detected - execute it with tracing
+			c.logger.InfoKV("Tool call detected", "tool", toolCall.Tool)
+
+			// Marshal args for tracing
+			argsJSON, _ := json.Marshal(toolCall.Args)
+
+			// Start tool execution span with tool arguments as input
+			// IMPORTANT: Use the returned context so child spans (embedding, retriever) are properly nested
+			toolExecCtx, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "tool", string(argsJSON), map[string]string{
+				"bridge_available": "true",
+				"response_type":    "processing",
+				"tool_name":        toolCall.Tool,
+			})
+
+			// Create a context with timeout from the span context
+			toolCtx, cancel := context.WithTimeout(toolExecCtx, 1*time.Minute)
+			defer cancel()
+
+			startTime := time.Now()
+			// Execute the tool call
+			processedResponse, err := c.llmMCPBridge.ExecuteToolCall(toolCtx, toolCall, extraArgs)
+			toolDuration := time.Since(startTime)
+			c.tracingHandler.SetDuration(toolExecSpan, toolDuration)
+
+			if err != nil {
+				finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+				isToolResult = false
+				toolProcessingErr = err
+				c.tracingHandler.RecordError(toolExecSpan, err, "ERROR")
+			} else {
 				finalResponse = processedResponse
 				isToolResult = true
 				c.tracingHandler.SetOutput(toolExecSpan, processedResponse)
 				c.tracingHandler.RecordSuccess(toolExecSpan, "Tool executed successfully")
-			} else {
-				// No tool was executed
-				finalResponse = llmResponse.Content
-				isToolResult = false
-				c.tracingHandler.SetOutput(toolExecSpan, "No tool execution required")
-				c.tracingHandler.RecordSuccess(toolExecSpan, "No tool processing needed")
 			}
+			toolExecSpan.End()
+		} else {
+			// No tool call detected - just use LLM response content
+			finalResponse = llmResponse.Content
+			isToolResult = false
+			c.logger.Debug("No tool call detected, using LLM response as-is")
 		}
-		toolExecSpan.End()
 	}
 	// --- End of Process Tool Response Logic ---
 
@@ -699,7 +886,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		c.logger.DebugKV("Tool result", "result", logging.TruncateForLog(finalResponse, 500))
 
 		// Always re-prompt LLM with tool results for synthesis
-		// Construct a new prompt incorporating the original prompt and the tool result
+		// Construct a new prompt incorporating the enhanced query and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
 		// Start re-prompt span

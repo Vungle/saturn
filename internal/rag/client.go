@@ -4,13 +4,20 @@ package rag
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
+
+	"github.com/tuannvm/slack-mcp-client/internal/observability"
 )
 
 // Client wraps vector providers to implement the MCP tool interface
 // This allows the LLM-MCP bridge to treat RAG as a regular MCP tool
 type Client struct {
-	provider VectorProvider
+	provider          VectorProvider
+	embeddingProvider EmbeddingProvider      // Interface for embedding providers (Voyage, OpenAI, etc.)
+	config            map[string]interface{} // Raw config for accessing provider-specific settings
+	tracingHandler    interface{}            // Tracing handler for observability (optional)
 }
 
 // NewClient creates a new RAG client with simple provider (legacy compatibility)
@@ -27,11 +34,13 @@ func NewClient(ragDatabase string) *Client {
 		_ = simpleProvider.Initialize(context.Background())
 		return &Client{
 			provider: simpleProvider,
+			config:   config,
 		}
 	}
 
 	return &Client{
 		provider: provider,
+		config:   config,
 	}
 }
 
@@ -50,7 +59,19 @@ func NewClientWithProvider(providerType string, config map[string]interface{}) (
 
 	return &Client{
 		provider: provider,
+		config:   config,
 	}, nil
+}
+
+// SetEmbeddingProvider sets the embedding provider for enhanced RAG search
+// Query enhancement is now done before RAG search in the Slack client layer
+func (c *Client) SetEmbeddingProvider(embeddingProvider EmbeddingProvider) {
+	c.embeddingProvider = embeddingProvider
+}
+
+// SetTracingHandler sets the tracing handler for observability
+func (c *Client) SetTracingHandler(tracingHandler interface{}) {
+	c.tracingHandler = tracingHandler
 }
 
 // CallTool implements the MCP tool interface for RAG operations
@@ -71,7 +92,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	}
 }
 
-// handleRAGSearch processes search requests
+// handleRAGSearch processes search requests with enhanced pipeline
 func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{}) (string, error) {
 	// Extract and validate query parameter
 	query, err := c.extractStringParam(args, "query", true)
@@ -79,16 +100,147 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		return "", err
 	}
 
-	// Perform search using the provider
-	results, err := c.provider.Search(ctx, query, SearchOptions{})
-	if err != nil {
-		return "", fmt.Errorf("search failed: %w", err)
+	// Build search options
+	// Extract max_results from config, default to 20
+	maxResults := 20
+	if c.config != nil {
+		if maxResultsFloat, ok := c.config["max_results"].(float64); ok {
+			maxResults = int(maxResultsFloat)
+		} else if maxResultsInt, ok := c.config["max_results"].(int); ok {
+			maxResults = maxResultsInt
+		}
+	}
+
+	searchOpts := SearchOptions{
+		Limit:    maxResults,
+		Metadata: make(map[string]string),
+	}
+
+	// 2. Date filter logging
+	if queryMetadataRaw, ok := args["query_metadata"]; ok {
+		if metadata, ok := queryMetadataRaw.(*MetadataFilters); ok && metadata != nil {
+			// Extract date filter if present (LLM provides the exact list of dates)
+			if len(metadata.Dates) > 0 {
+				fmt.Printf("[RAG Date Filter] Detected temporal query with %d dates from LLM\n", len(metadata.Dates))
+				fmt.Printf("[RAG Date Filter] Dates: %v\n", metadata.Dates)
+
+				// Use the dates directly from LLM - no expansion needed
+				searchOpts.DateFilter = metadata.Dates
+			} else {
+				fmt.Printf("[RAG Date Filter] No date filter - non-temporal query\n")
+			}
+		}
+	} else {
+		fmt.Printf("[RAG Date Filter] No query metadata provided\n")
+	}
+
+	if c.embeddingProvider != nil {
+		// Create embedding span if tracing is enabled
+		var embResult *EmbeddingResult
+		if tracer, ok := c.tracingHandler.(observability.TracingHandler); ok && tracer != nil {
+			embCtx, embSpan := tracer.StartSpan(ctx, "query-embedding-creation", "embedding", query, map[string]string{
+				"provider": "voyage",
+			})
+
+			startTime := time.Now()
+			result, err := c.embeddingProvider.EmbedQuery(embCtx, query)
+			duration := time.Since(startTime)
+
+			tracer.SetDuration(embSpan, duration)
+
+			if err != nil {
+				tracer.RecordError(embSpan, err, "ERROR")
+				embSpan.End()
+				return "", fmt.Errorf("failed to embed query: %w", err)
+			}
+
+			embResult = result
+
+			// Set usage and cost details
+
+			// Set token usage (input tokens only for embeddings)
+			tracer.SetTokenUsage(embSpan, result.TokensUsed, 0, 0, result.TokensUsed)
+
+			// Set output: embedding dimensions
+			tracer.SetOutput(embSpan, fmt.Sprintf("Generated %d-dimensional embedding (%d tokens)",
+				len(result.Embedding), result.TokensUsed))
+
+			tracer.RecordSuccess(embSpan, fmt.Sprintf("Embedding generated: model=%s", result.Model))
+			embSpan.End()
+		} else {
+			// No tracing, just call embedding
+			result, err := c.embeddingProvider.EmbedQuery(ctx, query)
+			if err != nil {
+				return "", fmt.Errorf("failed to embed query: %w", err)
+			}
+			embResult = result
+		}
+
+		searchOpts.QueryVector = embResult.Embedding
+	}
+
+	// 3. S3 search parameters logging
+	fmt.Printf("[RAG Search] Query: '%s'\n", query)
+	fmt.Printf("[RAG Search] Max results: %d\n", searchOpts.Limit)
+	fmt.Printf("[RAG Search] Has embedding vector: %v (dimensions: %d)\n",
+		len(searchOpts.QueryVector) > 0, len(searchOpts.QueryVector))
+	fmt.Printf("[RAG Search] Date filter count: %d dates\n", len(searchOpts.DateFilter))
+
+	// 4. Vector search/retrieval with tracing
+	var results []SearchResult
+	if tracer, ok := c.tracingHandler.(observability.TracingHandler); ok && tracer != nil {
+		// Create retriever span for vector store query
+		retrieverCtx, retrieverSpan := tracer.StartSpan(ctx, "vector-search", "retriever", query, map[string]string{
+			"provider":             fmt.Sprintf("%T", c.provider),
+			"max_results":          fmt.Sprintf("%d", searchOpts.Limit),
+			"has_embedding_vector": fmt.Sprintf("%t", len(searchOpts.QueryVector) > 0),
+			"embedding_dimensions": fmt.Sprintf("%d", len(searchOpts.QueryVector)),
+			"date_filter_count":    fmt.Sprintf("%d", len(searchOpts.DateFilter)),
+		})
+
+		startTime := time.Now()
+		searchResults, err := c.provider.Search(retrieverCtx, query, searchOpts)
+		duration := time.Since(startTime)
+
+		tracer.SetDuration(retrieverSpan, duration)
+
+		if err != nil {
+			tracer.RecordError(retrieverSpan, err, "ERROR")
+			retrieverSpan.End()
+			return "", fmt.Errorf("search failed: %w", err)
+		}
+
+		results = searchResults
+
+		// Set output with result summary
+		tracer.SetOutput(retrieverSpan, fmt.Sprintf("Retrieved %d documents from vector store (duration: %v)",
+			len(results), duration))
+		tracer.RecordSuccess(retrieverSpan, fmt.Sprintf("Vector search completed: %d results", len(results)))
+		retrieverSpan.End()
+	} else {
+		// No tracing, just call search directly
+		searchResults, err := c.provider.Search(ctx, query, searchOpts)
+		if err != nil {
+			return "", fmt.Errorf("search failed: %w", err)
+		}
+		results = searchResults
 	}
 
 	// Format results for display
 	if len(results) == 0 {
 		return "No relevant context found for query: '" + query + "'", nil
 	}
+
+	// Get date filter field for sorting and display (if configured)
+	dateFilterField := ""
+	if c.config != nil {
+		if field, ok := c.config["date_filter_field"].(string); ok && field != "" {
+			dateFilterField = field
+		}
+	}
+
+	// TODO: Add reranking step here in the future
+	sortResultsByDate(results, dateFilterField)
 
 	// Build response string
 	var response strings.Builder
@@ -106,6 +258,13 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 			response.WriteString("\n")
 		}
 
+		// Add metadata if available (use configured date field)
+		if dateFilterField != "" {
+			if date, exists := result.Metadata[dateFilterField]; exists {
+				response.WriteString(fmt.Sprintf("Date: %s\n", date))
+			}
+		}
+
 		// Add content
 		response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
 
@@ -116,6 +275,37 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 	}
 
 	return response.String(), nil
+}
+
+// sortResultsByDate sorts results by the configured date field in descending order (newest first)
+// If dateField is empty, no sorting is performed
+// Uses sort.Slice for O(n log n) performance
+func sortResultsByDate(results []SearchResult, dateField string) {
+	if dateField == "" {
+		fmt.Printf("[Sort] Skipping sort - dateField is empty\n")
+		return // Skip sorting if no date field configured
+	}
+
+	fmt.Printf("[Sort] Sorting %d results by field '%s'\n", len(results), dateField)
+
+	// Log first 3 dates before sorting
+	for i := 0; i < len(results) && i < 3; i++ {
+		date := results[i].Metadata[dateField]
+		fmt.Printf("[Sort] Before[%d]: %s (source: %s)\n", i, date, results[i].FileName)
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		dateI := results[i].Metadata[dateField]
+		dateJ := results[j].Metadata[dateField]
+		return dateI > dateJ // Descending order (newest first)
+	})
+
+	// Log first 3 dates after sorting
+	fmt.Printf("[Sort] After sorting:\n")
+	for i := 0; i < len(results) && i < 3; i++ {
+		date := results[i].Metadata[dateField]
+		fmt.Printf("[Sort] After[%d]: %s (source: %s)\n", i, date, results[i].FileName)
+	}
 }
 
 // handleRAGIngest processes document ingestion requests
