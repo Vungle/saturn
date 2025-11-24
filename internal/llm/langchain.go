@@ -136,8 +136,28 @@ func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt strin
 	if len(choices) < 1 {
 		return nil, fmt.Errorf("empty response from model")
 	}
-	c1 := choices[0]
-	return c1, nil
+	var content int
+	var thinkingContent string
+	var thinkingTokens int
+
+	for i, choice := range choices {
+		if choice.Content != "" {
+			content = i
+		}
+		if choice.GenerationInfo != nil {
+			if tc, ok := choice.GenerationInfo["ThinkingContent"].(string); ok && tc != "" {
+				thinkingContent = tc
+			}
+			// Extract thinking token usage
+			usage := llms.ExtractThinkingTokens(choice.GenerationInfo)
+			if usage != nil && usage.ThinkingTokens > 0 {
+				thinkingTokens = usage.ThinkingTokens
+			}
+		}
+	}
+	p.logger.DebugKV("Thinking content", "content", thinkingContent, "tokens", thinkingTokens)
+
+	return choices[content], nil
 }
 
 // GenerateChatCompletion generates a chat completion using LangChainGo

@@ -57,11 +57,12 @@ type LLMConfig struct {
 
 // LLMProviderConfig contains provider-specific settings
 type LLMProviderConfig struct {
-	Model       string  `json:"model"`
-	APIKey      string  `json:"apiKey,omitempty"`
-	BaseURL     string  `json:"baseUrl,omitempty"`
-	Temperature float64 `json:"temperature,omitempty"`
-	MaxTokens   int     `json:"maxTokens,omitempty"`
+	Model        string `json:"model"`
+	APIKey       string `json:"apiKey,omitempty"`
+	BaseURL      string `json:"baseUrl,omitempty"`
+	Temperature  float64 `json:"temperature,omitempty"`
+	MaxTokens    int    `json:"maxTokens,omitempty"`
+	ThinkingMode string `json:"thinkingMode,omitempty"` // Thinking mode: none, low, medium, high, auto (default: auto)
 }
 
 // MCPServerConfig contains MCP server configuration
@@ -211,23 +212,44 @@ func (c *Config) applyLLMDefaults() {
 	// Set default provider configurations if they don't exist
 	if _, exists := c.LLM.Providers[ProviderOpenAI]; !exists {
 		c.LLM.Providers[ProviderOpenAI] = LLMProviderConfig{
-			Model:       "gpt-4o",
-			Temperature: 0.7,
+			Model:        "gpt-4o",
+			Temperature:  0.7,
+			ThinkingMode: "auto",
+		}
+	} else {
+		// Apply default thinking mode if not set
+		if providerConfig := c.LLM.Providers[ProviderOpenAI]; providerConfig.ThinkingMode == "" {
+			providerConfig.ThinkingMode = "auto"
+			c.LLM.Providers[ProviderOpenAI] = providerConfig
 		}
 	}
 
 	if _, exists := c.LLM.Providers[ProviderAnthropic]; !exists {
 		c.LLM.Providers[ProviderAnthropic] = LLMProviderConfig{
-			Model:       "claude-3-5-sonnet-20241022",
-			Temperature: 0.7,
+			Model:        "claude-3-5-sonnet-20241022",
+			Temperature:  0.7,
+			ThinkingMode: "auto",
+		}
+	} else {
+		// Apply default thinking mode if not set
+		if providerConfig := c.LLM.Providers[ProviderAnthropic]; providerConfig.ThinkingMode == "" {
+			providerConfig.ThinkingMode = "auto"
+			c.LLM.Providers[ProviderAnthropic] = providerConfig
 		}
 	}
 
 	if _, exists := c.LLM.Providers[ProviderOllama]; !exists {
 		c.LLM.Providers[ProviderOllama] = LLMProviderConfig{
-			Model:       "llama3",
-			BaseURL:     "http://localhost:11434",
-			Temperature: 0.7,
+			Model:        "llama3",
+			BaseURL:      "http://localhost:11434",
+			Temperature:  0.7,
+			ThinkingMode: "auto",
+		}
+	} else {
+		// Apply default thinking mode if not set
+		if providerConfig := c.LLM.Providers[ProviderOllama]; providerConfig.ThinkingMode == "" {
+			providerConfig.ThinkingMode = "auto"
+			c.LLM.Providers[ProviderOllama] = providerConfig
 		}
 	}
 }
@@ -385,6 +407,9 @@ func (c *Config) ApplyEnvironmentVariables() {
 		if model := os.Getenv("OPENAI_MODEL"); model != "" {
 			openaiConfig.Model = model
 		}
+		if thinkingMode := os.Getenv("OPENAI_THINKING_MODE"); thinkingMode != "" {
+			openaiConfig.ThinkingMode = thinkingMode
+		}
 		c.LLM.Providers[ProviderOpenAI] = openaiConfig
 	}
 
@@ -396,6 +421,9 @@ func (c *Config) ApplyEnvironmentVariables() {
 		if model := os.Getenv("ANTHROPIC_MODEL"); model != "" {
 			anthropicConfig.Model = model
 		}
+		if thinkingMode := os.Getenv("ANTHROPIC_THINKING_MODE"); thinkingMode != "" {
+			anthropicConfig.ThinkingMode = thinkingMode
+		}
 		c.LLM.Providers[ProviderAnthropic] = anthropicConfig
 	}
 
@@ -406,6 +434,9 @@ func (c *Config) ApplyEnvironmentVariables() {
 		}
 		if model := os.Getenv("OLLAMA_MODEL"); model != "" {
 			ollamaConfig.Model = model
+		}
+		if thinkingMode := os.Getenv("OLLAMA_THINKING_MODE"); thinkingMode != "" {
+			ollamaConfig.ThinkingMode = thinkingMode
 		}
 		c.LLM.Providers[ProviderOllama] = ollamaConfig
 	}

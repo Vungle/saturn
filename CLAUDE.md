@@ -84,6 +84,36 @@ docker-compose up -d
 - `.env`: Environment variables (optional)
 - Config supports both legacy format and new `mcpServers` format
 
+### Thinking Mode Configuration
+The thinking mode controls how the LLM performs extended reasoning. It can be configured per provider:
+
+**Configuration File (JSON)**:
+```json
+{
+  "llm": {
+    "provider": "anthropic",
+    "providers": {
+      "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "thinkingMode": "auto"
+      }
+    }
+  }
+}
+```
+
+**Environment Variables**:
+- `OPENAI_THINKING_MODE`: Override thinking mode for OpenAI
+- `ANTHROPIC_THINKING_MODE`: Override thinking mode for Anthropic
+- `OLLAMA_THINKING_MODE`: Override thinking mode for Ollama
+
+**Valid Values**:
+- `none`: No extended thinking
+- `low`: Minimal reasoning overhead
+- `medium`: Balanced reasoning
+- `high`: Deep reasoning
+- `auto`: Let the model decide (default)
+
 ### RAG Configuration
 RAG can be enabled via LLM provider config with `rag_enabled: true`. Supports JSON-based storage and OpenAI vector stores.
 
