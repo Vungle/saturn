@@ -598,6 +598,8 @@ func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoi
 			if providerConfig.ThinkingMode != "" {
 				options.ThinkingMode = llms.ThinkingMode(providerConfig.ThinkingMode)
 			}
+			// Set include thinking in response from config
+			options.IncludeThinkingInResponse = providerConfig.IncludeThinkingInResponse
 		}
 	}
 

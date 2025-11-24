@@ -57,12 +57,13 @@ type LLMConfig struct {
 
 // LLMProviderConfig contains provider-specific settings
 type LLMProviderConfig struct {
-	Model        string `json:"model"`
-	APIKey       string `json:"apiKey,omitempty"`
-	BaseURL      string `json:"baseUrl,omitempty"`
-	Temperature  float64 `json:"temperature,omitempty"`
-	MaxTokens    int    `json:"maxTokens,omitempty"`
-	ThinkingMode string `json:"thinkingMode,omitempty"` // Thinking mode: none, low, medium, high, auto (default: auto)
+	Model                     string  `json:"model"`
+	APIKey                    string  `json:"apiKey,omitempty"`
+	BaseURL                   string  `json:"baseUrl,omitempty"`
+	Temperature               float64 `json:"temperature,omitempty"`
+	MaxTokens                 int     `json:"maxTokens,omitempty"`
+	ThinkingMode              string  `json:"thinkingMode,omitempty"`              // Thinking mode: none, low, medium, high, auto (default: auto)
+	IncludeThinkingInResponse bool    `json:"includeThinkingInResponse,omitempty"` // Include thinking content in response (default: false)
 }
 
 // MCPServerConfig contains MCP server configuration
@@ -410,6 +411,11 @@ func (c *Config) ApplyEnvironmentVariables() {
 		if thinkingMode := os.Getenv("OPENAI_THINKING_MODE"); thinkingMode != "" {
 			openaiConfig.ThinkingMode = thinkingMode
 		}
+		if includeThinking := os.Getenv("OPENAI_INCLUDE_THINKING_IN_RESPONSE"); includeThinking != "" {
+			if val, err := strconv.ParseBool(includeThinking); err == nil {
+				openaiConfig.IncludeThinkingInResponse = val
+			}
+		}
 		c.LLM.Providers[ProviderOpenAI] = openaiConfig
 	}
 
@@ -424,6 +430,11 @@ func (c *Config) ApplyEnvironmentVariables() {
 		if thinkingMode := os.Getenv("ANTHROPIC_THINKING_MODE"); thinkingMode != "" {
 			anthropicConfig.ThinkingMode = thinkingMode
 		}
+		if includeThinking := os.Getenv("ANTHROPIC_INCLUDE_THINKING_IN_RESPONSE"); includeThinking != "" {
+			if val, err := strconv.ParseBool(includeThinking); err == nil {
+				anthropicConfig.IncludeThinkingInResponse = val
+			}
+		}
 		c.LLM.Providers[ProviderAnthropic] = anthropicConfig
 	}
 
@@ -437,6 +448,11 @@ func (c *Config) ApplyEnvironmentVariables() {
 		}
 		if thinkingMode := os.Getenv("OLLAMA_THINKING_MODE"); thinkingMode != "" {
 			ollamaConfig.ThinkingMode = thinkingMode
+		}
+		if includeThinking := os.Getenv("OLLAMA_INCLUDE_THINKING_IN_RESPONSE"); includeThinking != "" {
+			if val, err := strconv.ParseBool(includeThinking); err == nil {
+				ollamaConfig.IncludeThinkingInResponse = val
+			}
 		}
 		c.LLM.Providers[ProviderOllama] = ollamaConfig
 	}

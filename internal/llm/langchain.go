@@ -157,6 +157,13 @@ func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt strin
 	}
 	p.logger.DebugKV("Thinking content", "content", thinkingContent, "tokens", thinkingTokens)
 
+	// If configured to include thinking content in response, prepend it to the content
+	if options.IncludeThinkingInResponse && thinkingContent != "" {
+		result := choices[content]
+		result.Content = "## Thinking Process\n\n" + thinkingContent + "\n\n## Response\n\n" + result.Content
+		return result, nil
+	}
+
 	return choices[content], nil
 }
 
