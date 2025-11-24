@@ -24,9 +24,10 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if and .Values.serviceAccount.create .Values.serviceAccount.clusterRoleName }}
-      serviceAccountName: {{ include "slack-mcp-client.fullname" . }}
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name | default (include "slack-mcp-client.fullname" .) }}
       {{- end }}
+
       {{- if .Values.initContainers }}
       initContainers:
         {{- range .Values.initContainers }}

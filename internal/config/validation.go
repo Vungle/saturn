@@ -194,6 +194,12 @@ func (c *Config) SubstituteEnvironmentVariables() {
 	c.Observability.ServiceName = substituteEnvVars(c.Observability.ServiceName)
 	c.Observability.ServiceVersion = substituteEnvVars(c.Observability.ServiceVersion)
 
+	// Substitute in RAG Embedding Providers configuration
+	for name, provider := range c.RAG.EmbeddingProviders {
+		provider.APIKey = substituteEnvVars(provider.APIKey)
+		c.RAG.EmbeddingProviders[name] = provider
+	}
+
 }
 
 // substituteEnvVars replaces ${VAR_NAME} patterns with environment variable values
