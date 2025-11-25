@@ -95,12 +95,15 @@ The thinking mode controls how the LLM performs extended reasoning. It can be co
     "providers": {
       "anthropic": {
         "model": "claude-3-5-sonnet-20241022",
-        "thinkingMode": "auto"
+        "thinkingMode": "medium",
+        "includeThinkingInResponse": true,
       }
     }
   }
 }
 ```
+
+CalculateThinkingBudget calculates the token budget based on mode and max tokens. refer to https://github.com/tmc/langchaingo/blob/509308ff01c13e662d5613d3aea793fabe18edd2/llms/reasoning.go#L197
 
 **Environment Variables**:
 - `OPENAI_THINKING_MODE`: Override thinking mode for OpenAI
