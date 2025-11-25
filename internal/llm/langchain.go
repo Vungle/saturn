@@ -136,8 +136,35 @@ func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt strin
 	if len(choices) < 1 {
 		return nil, fmt.Errorf("empty response from model")
 	}
-	c1 := choices[0]
-	return c1, nil
+	var content int
+	var thinkingContent string
+	var thinkingTokens int
+
+	for i, choice := range choices {
+		if choice.Content != "" {
+			content = i
+		}
+		if choice.GenerationInfo != nil {
+			if tc, ok := choice.GenerationInfo["ThinkingContent"].(string); ok && tc != "" {
+				thinkingContent = tc
+			}
+			// Extract thinking token usage
+			usage := llms.ExtractThinkingTokens(choice.GenerationInfo)
+			if usage != nil && usage.ThinkingTokens > 0 {
+				thinkingTokens = usage.ThinkingTokens
+			}
+		}
+	}
+	p.logger.DebugKV("Thinking content", "content", thinkingContent, "tokens", thinkingTokens)
+
+	// If configured to include thinking content in response, prepend it to the content
+	if options.IncludeThinkingInResponse && thinkingContent != "" {
+		result := choices[content]
+		result.Content = "## Thinking Process\n\n" + thinkingContent + "\n\n## Response\n\n" + result.Content
+		return result, nil
+	}
+
+	return choices[content], nil
 }
 
 // GenerateChatCompletion generates a chat completion using LangChainGo
@@ -319,6 +346,15 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 		callOptions = append(callOptions, llms.WithTools(options.Tools))
 		p.logger.DebugKV("Adding functions for tools", "tools", len(options.Tools))
 	}
+
+	// ThinkingMode: Apply if specified, otherwise use default
+	// https://github.com/tmc/langchaingo/blob/main/llms/reasoning.go
+	thinkingMode := options.ThinkingMode
+	if thinkingMode == "" {
+		thinkingMode = llms.ThinkingModeAuto // Default to Auto for better reasoning
+	}
+	callOptions = append(callOptions, llms.WithThinkingMode(thinkingMode))
+	p.logger.DebugKV("Adding ThinkingMode option", "mode", thinkingMode)
 
 	// Note: options.TargetProvider is handled during factory creation, not here.
 

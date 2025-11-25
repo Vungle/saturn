@@ -602,6 +602,12 @@ func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoi
 		if providerConfig, exists := b.cfg.LLM.Providers[providerName]; exists {
 			options.Temperature = providerConfig.Temperature
 			options.MaxTokens = providerConfig.MaxTokens
+			// Set thinking mode from config (will be passed to buildOptions in LangChain provider)
+			if providerConfig.ThinkingMode != "" {
+				options.ThinkingMode = llms.ThinkingMode(providerConfig.ThinkingMode)
+			}
+			// Set include thinking in response from config
+			options.IncludeThinkingInResponse = providerConfig.IncludeThinkingInResponse
 		}
 	}
 

@@ -86,11 +86,13 @@ type RequestMessage struct {
 
 // ProviderOptions contains options for LLM requests
 type ProviderOptions struct {
-	Model          string  // Model to use (specific model name, e.g., gpt-4o)
-	Temperature    float64 // Temperature for response generation (0-1)
-	MaxTokens      int     // Maximum number of tokens to generate
-	TargetProvider string  // For gateway providers: specifies the underlying provider (e.g., "openai", "ollama")
-	Tools          []llms.Tool
+	Model                     string            // Model to use (specific model name, e.g., gpt-4o)
+	Temperature               float64           // Temperature for response generation (0-1)
+	MaxTokens                 int               // Maximum number of tokens to generate
+	TargetProvider            string            // For gateway providers: specifies the underlying provider (e.g., "openai", "ollama")
+	Tools                     []llms.Tool       // Tools available for the model to use
+	ThinkingMode              llms.ThinkingMode // Thinking mode for extended reasoning (none, low, medium, high, auto)
+	IncludeThinkingInResponse bool              // Include thinking content in response (default: false)
 }
 
 // LLMProvider defines the interface for language model providers
