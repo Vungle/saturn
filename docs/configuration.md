@@ -314,6 +314,14 @@ CUSTOM_PROMPT="You are a DevOps assistant."
 
 ## Slack App Setup
 
+### Create Slack App
+
+You can create a Slack app from a manifest JSON file (e.g., slack_app_manifest.json).
+
+Note that the manifest does not cover all app settings. You still need to:
+- Create an app-level token and a bot token in the app’s settings pages.
+- Enable direct messages for the bot under App Home. The Messages (DM) setting is not controlled by the manifest.
+
 ### Token Types
 
 The application requires two types of tokens:
