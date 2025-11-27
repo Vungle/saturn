@@ -1,0 +1,49 @@
+{
+    "display_information": {
+        "name": "<Your App Name>",
+        "description": "<Your App Description>",
+        "background_color": "#1c4ad6"
+    },
+    "features": {
+        "bot_user": {
+            "display_name": "<Your App Name>",
+            "always_online": true
+        }
+    },
+    "oauth_config": {
+        "scopes": {
+            "bot": [
+                "app_mentions:read",
+                "assistant:write",
+                "channels:history",
+                "channels:read",
+                "chat:write",
+                "groups:history",
+                "groups:read",
+                "im:history",
+                "im:read",
+                "im:write",
+                "im:write.topic",
+                "incoming-webhook",
+                "mpim:history",
+                "users.profile:read",
+                "users:read",
+                "lists:read"
+            ]
+        }
+    },
+    "settings": {
+        "event_subscriptions": {
+            "bot_events": [
+                "app_mention",
+                "message.im"
+            ]
+        },
+        "interactivity": {
+            "is_enabled": true
+        },
+        "org_deploy_enabled": false,
+        "socket_mode_enabled": true,
+        "token_rotation_enabled": false
+    }
+}
